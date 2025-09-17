@@ -69,6 +69,7 @@ function App() {
   const splitCanvasRefs = useRef({})
   const mediaRecorderRef = useRef(null)
   const recordedChunksRef = useRef([])
+  const fileInputRef = useRef(null)
 
   // Web Audio analyser
   const analyserCtxRef = useRef(null)
@@ -79,14 +80,22 @@ function App() {
 
   // Handle file selection
   const onSelectFile = (e) => {
+    console.log('onSelectFile called')
     const file = e.target.files?.[0]
-    if (!file) return
+    console.log('Selected file:', file)
+    
+    if (!file) {
+      console.log('No file selected')
+      return
+    }
+    
     setSelectedFile(file)
     setRecordUrl('')
     setLufsData(null)
     setNormalizedUrl('')
 
     const url = URL.createObjectURL(file)
+    console.log('Created audio URL:', url)
     setAudioUrl(url)
   }
 
@@ -481,19 +490,43 @@ function App() {
   }
 
   const onTogglePlay = async () => {
+    console.log('onTogglePlay called')
+    console.log('audioRef.current:', audioRef.current)
+    console.log('audioUrl:', audioUrl)
+    console.log('selectedFile:', selectedFile)
+    
     const audio = audioRef.current
-    if (!audio) return
-    if (analyserCtxRef.current && analyserCtxRef.current.state === 'suspended') {
-      try { await analyserCtxRef.current.resume() } catch (err) { console.debug('AudioContext resume failed', err) }
+    if (!audio) {
+      console.error('No audio element found')
+      return
     }
+    
+    if (!audioUrl) {
+      console.error('No audio URL set')
+      return
+    }
+    
+    if (analyserCtxRef.current && analyserCtxRef.current.state === 'suspended') {
+      try { 
+        await analyserCtxRef.current.resume() 
+        console.log('AudioContext resumed')
+      } catch (err) { 
+        console.debug('AudioContext resume failed', err) 
+      }
+    }
+    
     if (audio.paused) {
       try {
+        console.log('Attempting to play audio')
         await audio.play()
         setIsPlaying(true)
+        console.log('Audio playing successfully')
       } catch (e) {
-        console.error(e)
+        console.error('Play failed:', e)
+        alert('재생 실패: ' + e.message)
       }
     } else {
+      console.log('Pausing audio')
       audio.pause()
       setIsPlaying(false)
     }
@@ -730,17 +763,24 @@ function App() {
     <input type="number" value={value} onChange={(e) => onChange(Number(e.target.value || 0))} {...props} />
   )
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <h1>Sound Wave Video Maker</h1>
+  const handleFileButtonClick = () => {
+    fileInputRef.current?.click()
+  }
 
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} className="unified-width">
+      <h1 style={{ fontFamily: 'Bitcount Grid Double, Roboto Condensed, sans-serif' }}>Sound Wave Video Maker</h1>
+
+      <div className="file-row unified-width">
         <input
+          ref={fileInputRef}
           type="file"
           accept="audio/*,video/mp4,video/mpeg,video/webm,.wav,.mp3,.m4a,.aac,.ogg,.flac,.mp4"
           onChange={onSelectFile}
+          style={{ display: 'none' }}
         />
-        {selectedFile && <span>{selectedFile.name}</span>}
+        <button type="button" onClick={handleFileButtonClick}>Choose File</button>
+        <span className="file-caption">{selectedFile ? selectedFile.name : 'No file selected'}</span>
       </div>
 
       <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -765,30 +805,37 @@ function App() {
       </div>
 
       {/* LUFS Analyzer */}
-      <div style={{ border: '1px solid #2a2a3b', borderRadius: 8, padding: 16, maxWidth: 980, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <h2 style={{ margin: 0 }}>LUFS Analyzer</h2>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+        <h2 className="section-title">LUFS Analyzer</h2>
+        <div className="controls-row">
           <button disabled={!selectedFile || isMeasuring} onClick={measureLUFS}>
             {isMeasuring ? 'Measuring…' : 'Measure LUFS'}
           </button>
           {lufsData && (
-            <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="controls-row">
               <span><b>I</b>: {Number.isFinite(measuredI) ? measuredI.toFixed(3) : '-'} LUFS</span>
               <span><b>TP</b>: {Number.isFinite(measuredTP) ? measuredTP.toFixed(3) : '-'} dBTP</span>
               <span><b>LRA</b>: {Number.isFinite(measuredLRA) ? measuredLRA.toFixed(3) : '-'} dB</span>
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
           {lufsBar()}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <label>Target LUFS</label>
-            {numberInput(targetLufs, setTargetLufs, { step: 0.5, style: { width: 96 } })}
-            <label>TP</label>
-            {numberInput(targetTp, setTargetTp, { step: 0.1, style: { width: 80 } })}
-            <label>LRA</label>
-            {numberInput(targetLra, setTargetLra, { step: 0.5, style: { width: 80 } })}
-            <label style={{ marginLeft: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div className="controls-row" style={{ justifyContent: 'space-between', width: '100%' }}>
+            <div className="controls-row">
+              <label>Target LUFS</label>
+              {numberInput(targetLufs, setTargetLufs, { step: 0.5, style: { width: 96 } })}
+              <label>TP</label>
+              {numberInput(targetTp, setTargetTp, { step: 0.1, style: { width: 80 } })}
+              <label>LRA</label>
+              {numberInput(targetLra, setTargetLra, { step: 0.5, style: { width: 80 } })}
+            </div>
+            <button disabled={!selectedFile || isNormalizing} onClick={normalizeToTarget}>
+              {isNormalizing ? 'Normalizing…' : 'Normalize & Download'}
+            </button>
+          </div>
+          <div className="controls-row">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <input type="checkbox" checked={preCompress} onChange={(e) => setPreCompress(e.target.checked)} /> Tighten dynamics
             </label>
             {preCompress && (
@@ -803,9 +850,6 @@ function App() {
                 {numberInput(compRelease, setCompRelease, { step: 10, style: { width: 80 } })}
               </>
             )}
-            <button disabled={!selectedFile || isNormalizing} onClick={normalizeToTarget}>
-              {isNormalizing ? 'Normalizing…' : 'Normalize & Download'}
-            </button>
           </div>
         </div>
         {normalizedUrl && (
@@ -813,121 +857,216 @@ function App() {
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center' }}>
-        <label>Visuals:</label>
-        {VIS_TYPES.map(v => (
-          <label key={v.id} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <input type="checkbox" checked={selectedVis.includes(v.id)} onChange={() => toggleVis(v.id)} /> {v.label}
-          </label>
-        ))}
-        <label>Layout:</label>
-        <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <input type="radio" name="layout" value="overlay" checked={layoutMode === 'overlay'} onChange={() => setLayoutMode('overlay')} /> Overlay
-        </label>
-        <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <input type="radio" name="layout" value="split" checked={layoutMode === 'split'} onChange={() => setLayoutMode('split')} /> Split
-        </label>
+      <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <label>Visuals:</label>
+        </div>
+        <div className="visuals-grid">
+          {VIS_TYPES.map(v => (
+            <label key={v.id} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="checkbox" checked={selectedVis.includes(v.id)} onChange={() => toggleVis(v.id)} /> {v.label}
+            </label>
+          ))}
+        </div>
+        <div className="layout-row">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <b>Layout</b>
+            <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <input type="radio" name="layout" value="overlay" checked={layoutMode === 'overlay'} onChange={() => setLayoutMode('overlay')} /> Overlay
+            </label>
+            <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <input type="radio" name="layout" value="split" checked={layoutMode === 'split'} onChange={() => setLayoutMode('split')} /> Split
+            </label>
+          </div>
+        </div>
       </div>
 
       {/* Per-visual settings panel */}
-      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: '1fr', maxWidth: 980, margin: '0 auto' }}>
-        {selectedVis.includes('line') && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <b>Line</b>
-            <label>Color</label>
-            <input type="color" value={visSettings.line.color} onChange={(e) => updateVisSetting('line', 'color', e.target.value)} />
-            <label>Thickness</label>
-            {numberInput(visSettings.line.thickness, (v) => updateVisSetting('line', 'thickness', v), { min: 1, max: 8, step: 1, style: { width: 64 } })}
-            <label>Sensitivity</label>
-            {numberInput(visSettings.line.sensitivity, (v) => updateVisSetting('line', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, style: { width: 80 } })}
-          </div>
-        )}
-        {selectedVis.includes('bars') && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <b>Bars</b>
-            <label>Color</label>
-            <input type="color" value={visSettings.bars.color} onChange={(e) => updateVisSetting('bars', 'color', e.target.value)} />
-            <label>Columns</label>
-            {numberInput(visSettings.bars.columns, (v) => updateVisSetting('bars', 'columns', v), { min: 50, max: 400, step: 10, style: { width: 80 } })}
-            <label>Sensitivity</label>
-            {numberInput(visSettings.bars.sensitivity, (v) => updateVisSetting('bars', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, style: { width: 80 } })}
-          </div>
-        )}
-        {selectedVis.includes('spectrum') && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <b>Spectrum</b>
-            <label>Color</label>
-            <input type="color" value={visSettings.spectrum.color} onChange={(e) => updateVisSetting('spectrum', 'color', e.target.value)} />
-            <label>Columns</label>
-            {numberInput(visSettings.spectrum.columns, (v) => updateVisSetting('spectrum', 'columns', v), { min: 32, max: 512, step: 8, style: { width: 80 } })}
-            <label>Sensitivity</label>
-            {numberInput(visSettings.spectrum.sensitivity, (v) => updateVisSetting('spectrum', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, style: { width: 80 } })}
-          </div>
-        )}
-        {selectedVis.includes('circular') && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <b>Circular</b>
-            <label>Color</label>
-            <input type="color" value={visSettings.circular.color} onChange={(e) => updateVisSetting('circular', 'color', e.target.value)} />
-            <label>Thickness</label>
-            {numberInput(visSettings.circular.thickness, (v) => updateVisSetting('circular', 'thickness', v), { min: 1, max: 6, step: 1, style: { width: 64 } })}
-            <label>Sensitivity</label>
-            {numberInput(visSettings.circular.sensitivity, (v) => updateVisSetting('circular', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, style: { width: 80 } })}
-            <label>Radius</label>
-            {numberInput(visSettings.circular.radiusScale, (v) => updateVisSetting('circular', 'radiusScale', v), { min: 0.2, max: 0.9, step: 0.05, style: { width: 80 } })}
-            <label>Segments</label>
-            {numberInput(visSettings.circular.segments, (v) => updateVisSetting('circular', 'segments', v), { min: 32, max: 512, step: 8, style: { width: 80 } })}
-          </div>
-        )}
-        {selectedVis.includes('mirrored') && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <b>Mirrored</b>
-            <label>Color</label>
-            <input type="color" value={visSettings.mirrored.color} onChange={(e) => updateVisSetting('mirrored', 'color', e.target.value)} />
-            <label>Columns</label>
-            {numberInput(visSettings.mirrored.columns, (v) => updateVisSetting('mirrored', 'columns', v), { min: 50, max: 400, step: 10, style: { width: 80 } })}
-            <label>Sensitivity</label>
-            {numberInput(visSettings.mirrored.sensitivity, (v) => updateVisSetting('mirrored', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, style: { width: 80 } })}
-          </div>
-        )}
-        {selectedVis.includes('rms') && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <b>RMS</b>
-            <label>Color</label>
-            <input type="color" value={visSettings.rms.color} onChange={(e) => updateVisSetting('rms', 'color', e.target.value)} />
-            <label>Thickness</label>
-            {numberInput(visSettings.rms.thickness, (v) => updateVisSetting('rms', 'thickness', v), { min: 1, max: 6, step: 1, style: { width: 64 } })}
-            <label>Window</label>
-            {numberInput(visSettings.rms.window, (v) => updateVisSetting('rms', 'window', v), { min: 8, max: 256, step: 4, style: { width: 80 } })}
-          </div>
-        )}
-        {selectedVis.includes('wave3d') && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <b>Wave 3D</b>
-            <label>Color</label>
-            <input type="color" value={visSettings.wave3d.color} onChange={(e) => updateVisSetting('wave3d', 'color', e.target.value)} />
-            <label>Highlight</label>
-            <input type="color" value={visSettings.wave3d.highlight} onChange={(e) => updateVisSetting('wave3d', 'highlight', e.target.value)} />
-            <label>Shadow</label>
-            <input type="color" value={visSettings.wave3d.shadow} onChange={(e) => updateVisSetting('wave3d', 'shadow', e.target.value)} />
-            <label>Layers</label>
-            {numberInput(visSettings.wave3d.layers, (v) => updateVisSetting('wave3d', 'layers', Math.max(3, Math.min(24, v))), { min: 3, max: 24, step: 1, style: { width: 80 } })}
-            <label>Depth</label>
-            {numberInput(visSettings.wave3d.depth, (v) => updateVisSetting('wave3d', 'depth', Math.max(2, Math.min(24, v))), { min: 2, max: 24, step: 1, style: { width: 80 } })}
-            <label>Tilt</label>
-            {numberInput(visSettings.wave3d.tilt, (v) => updateVisSetting('wave3d', 'tilt', Math.max(0, Math.min(1.5, v))), { min: 0, max: 1.5, step: 0.05, style: { width: 80 } })}
-            <label>Sens</label>
-            {numberInput(visSettings.wave3d.sensitivity, (v) => updateVisSetting('wave3d', 'sensitivity', Math.max(0.1, Math.min(5, v))), { min: 0.1, max: 5, step: 0.1, style: { width: 80 } })}
-          </div>
-        )}
+      <div className="section-card unified-width">
+        <table className="settings-table">
+          <tbody>
+            {selectedVis.includes('line') && (
+              <tr>
+                <td className="visual-name-cell">Line</td>
+                <td className="label-cell">Color</td>
+                <td className="input-cell">
+                  <input type="color" value={visSettings.line.color} onChange={(e) => updateVisSetting('line', 'color', e.target.value)} className="settings-color" />
+                </td>
+                <td className="label-cell">Thickness</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.line.thickness, (v) => updateVisSetting('line', 'thickness', v), { min: 1, max: 8, step: 1, className: "settings-input" })}
+                </td>
+                <td className="label-cell">Sensitivity</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.line.sensitivity, (v) => updateVisSetting('line', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, className: "settings-input" })}
+                </td>
+                <td></td>
+              </tr>
+            )}
+            {selectedVis.includes('bars') && (
+              <tr>
+                <td className="visual-name-cell">Bars</td>
+                <td className="label-cell">Color</td>
+                <td className="input-cell">
+                  <input type="color" value={visSettings.bars.color} onChange={(e) => updateVisSetting('bars', 'color', e.target.value)} className="settings-color" />
+                </td>
+                <td className="label-cell">Columns</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.bars.columns, (v) => updateVisSetting('bars', 'columns', v), { min: 50, max: 400, step: 10, className: "settings-input" })}
+                </td>
+                <td className="label-cell">Sensitivity</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.bars.sensitivity, (v) => updateVisSetting('bars', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, className: "settings-input" })}
+                </td>
+                <td></td>
+              </tr>
+            )}
+            {selectedVis.includes('spectrum') && (
+              <tr>
+                <td className="visual-name-cell">Spectrum</td>
+                <td className="label-cell">Color</td>
+                <td className="input-cell">
+                  <input type="color" value={visSettings.spectrum.color} onChange={(e) => updateVisSetting('spectrum', 'color', e.target.value)} className="settings-color" />
+                </td>
+                <td className="label-cell">Columns</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.spectrum.columns, (v) => updateVisSetting('spectrum', 'columns', v), { min: 32, max: 512, step: 8, className: "settings-input" })}
+                </td>
+                <td className="label-cell">Sensitivity</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.spectrum.sensitivity, (v) => updateVisSetting('spectrum', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, className: "settings-input" })}
+                </td>
+                <td></td>
+              </tr>
+            )}
+            {selectedVis.includes('circular') && (
+              <>
+                <tr>
+                  <td className="visual-name-cell">Circular</td>
+                  <td className="label-cell">Color</td>
+                  <td className="input-cell">
+                    <input type="color" value={visSettings.circular.color} onChange={(e) => updateVisSetting('circular', 'color', e.target.value)} className="settings-color" />
+                  </td>
+                  <td className="label-cell">Thickness</td>
+                  <td className="input-cell">
+                    {numberInput(visSettings.circular.thickness, (v) => updateVisSetting('circular', 'thickness', v), { min: 1, max: 6, step: 1, className: "settings-input" })}
+                  </td>
+                  <td className="label-cell">Sensitivity</td>
+                  <td className="input-cell">
+                    {numberInput(visSettings.circular.sensitivity, (v) => updateVisSetting('circular', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, className: "settings-input" })}
+                  </td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td></td>
+                  <td className="label-cell">Radius</td>
+                  <td className="input-cell">
+                    {numberInput(visSettings.circular.radiusScale, (v) => updateVisSetting('circular', 'radiusScale', v), { min: 0.2, max: 0.9, step: 0.05, className: "settings-input" })}
+                  </td>
+                  <td className="label-cell">Segments</td>
+                  <td className="input-cell">
+                    {numberInput(visSettings.circular.segments, (v) => updateVisSetting('circular', 'segments', v), { min: 32, max: 512, step: 8, className: "settings-input" })}
+                  </td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                </tr>
+              </>
+            )}
+            {selectedVis.includes('mirrored') && (
+              <tr>
+                <td className="visual-name-cell">Mirrored</td>
+                <td className="label-cell">Color</td>
+                <td className="input-cell">
+                  <input type="color" value={visSettings.mirrored.color} onChange={(e) => updateVisSetting('mirrored', 'color', e.target.value)} className="settings-color" />
+                </td>
+                <td className="label-cell">Columns</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.mirrored.columns, (v) => updateVisSetting('mirrored', 'columns', v), { min: 50, max: 400, step: 10, className: "settings-input" })}
+                </td>
+                <td className="label-cell">Sensitivity</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.mirrored.sensitivity, (v) => updateVisSetting('mirrored', 'sensitivity', v), { min: 0.1, max: 5, step: 0.1, className: "settings-input" })}
+                </td>
+                <td></td>
+              </tr>
+            )}
+            {selectedVis.includes('rms') && (
+              <tr>
+                <td className="visual-name-cell">RMS</td>
+                <td className="label-cell">Color</td>
+                <td className="input-cell">
+                  <input type="color" value={visSettings.rms.color} onChange={(e) => updateVisSetting('rms', 'color', e.target.value)} className="settings-color" />
+                </td>
+                <td className="label-cell">Thickness</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.rms.thickness, (v) => updateVisSetting('rms', 'thickness', v), { min: 1, max: 6, step: 1, className: "settings-input" })}
+                </td>
+                <td className="label-cell">Window</td>
+                <td className="input-cell">
+                  {numberInput(visSettings.rms.window, (v) => updateVisSetting('rms', 'window', v), { min: 8, max: 256, step: 4, className: "settings-input" })}
+                </td>
+                <td></td>
+              </tr>
+            )}
+            {selectedVis.includes('wave3d') && (
+              <>
+                <tr>
+                  <td className="visual-name-cell">Wave 3D</td>
+                  <td className="label-cell">Color</td>
+                  <td className="input-cell">
+                    <input type="color" value={visSettings.wave3d.color} onChange={(e) => updateVisSetting('wave3d', 'color', e.target.value)} className="settings-color" />
+                  </td>
+                  <td className="label-cell">Highlight</td>
+                  <td className="input-cell">
+                    <input type="color" value={visSettings.wave3d.highlight} onChange={(e) => updateVisSetting('wave3d', 'highlight', e.target.value)} className="settings-color" />
+                  </td>
+                  <td className="label-cell">Shadow</td>
+                  <td className="input-cell">
+                    <input type="color" value={visSettings.wave3d.shadow} onChange={(e) => updateVisSetting('wave3d', 'shadow', e.target.value)} className="settings-color" />
+                  </td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td></td>
+                  <td className="label-cell">Layers</td>
+                  <td className="input-cell">
+                    {numberInput(visSettings.wave3d.layers, (v) => updateVisSetting('wave3d', 'layers', Math.max(3, Math.min(24, v))), { min: 3, max: 24, step: 1, className: "settings-input" })}
+                  </td>
+                  <td className="label-cell">Depth</td>
+                  <td className="input-cell">
+                    {numberInput(visSettings.wave3d.depth, (v) => updateVisSetting('wave3d', 'depth', Math.max(2, Math.min(24, v))), { min: 2, max: 24, step: 1, className: "settings-input" })}
+                  </td>
+                  <td className="label-cell">Tilt</td>
+                  <td className="input-cell">
+                    {numberInput(visSettings.wave3d.tilt, (v) => updateVisSetting('wave3d', 'tilt', Math.max(0, Math.min(1.5, v))), { min: 0, max: 1.5, step: 0.05, className: "settings-input" })}
+                  </td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td></td>
+                  <td className="label-cell">Sens</td>
+                  <td className="input-cell">
+                    {numberInput(visSettings.wave3d.sensitivity, (v) => updateVisSetting('wave3d', 'sensitivity', Math.max(0.1, Math.min(5, v))), { min: 0.1, max: 5, step: 0.1, className: "settings-input" })}
+                  </td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                </tr>
+              </>
+            )}
+          </tbody>
+        </table>
       </div>
 
       {layoutMode === 'overlay' ? (
-        <div style={{ border: '1px solid #2a2a3b', borderRadius: 8, padding: 8 }} onClick={onSeek}>
+        <div className="section-card unified-width canvas-card" onClick={onSeek}>
           <canvas ref={canvasRef} />
         </div>
       ) : (
-        <div id="split-canvases" style={{ display: 'grid', gap: 8, gridTemplateColumns: '1fr', border: '1px solid #2a2a3b', borderRadius: 8, padding: 8 }} />
+        <div id="split-canvases" className="section-card unified-width canvas-card" style={{ display: 'grid', gap: 8, gridTemplateColumns: '1fr' }} />
       )}
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
@@ -935,6 +1074,9 @@ function App() {
           {isPlaying ? 'Pause' : 'Play'}
         </button>
         <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
+        <span style={{ fontSize: '12px', color: '#666' }}>
+          Debug: audioUrl={audioUrl ? 'set' : 'empty'}, selectedFile={selectedFile ? 'set' : 'empty'}
+        </span>
         {!isRecording ? (
           <button disabled={!audioUrl} onClick={startRecording}>Start Recording</button>
         ) : (

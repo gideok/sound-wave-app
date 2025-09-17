@@ -1,8 +1,167 @@
 #root {
-  max-width: 1280px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 24px;
   text-align: center;
+  font-family: 'Roboto Condensed', 'Bitcount Grid Double', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji';
+  color: #ffffff;
+  background: #0a0e1a;
+}
+
+.section-card {
+  border: 1px solid #374151;
+  border-radius: 12px;
+  padding: 16px;
+  background: #111827;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+}
+
+.section-title {
+  margin: 0 0 8px 0;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.controls-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  color: #e2e8f0;
+}
+
+.visuals-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 16px;
+  justify-items: start;
+  color: #e2e8f0;
+}
+
+.layout-row {
+  margin-top: 8px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  color: #e2e8f0;
+}
+
+.unified-width {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* Soft UI for inputs/buttons */
+button, select, input[type="number"], input[type="text"], input[type="color"] {
+  border-radius: 8px;
+  border: 1px solid #374151;
+  background: #1f2937;
+  color: #f9fafb;
+  padding: 6px 10px;
+  transition: background 160ms ease, transform 120ms ease, box-shadow 160ms ease;
+}
+button:hover, select:hover, input[type="number"]:hover, input[type="text"]:hover, input[type="color"]:hover {
+  background: #374151;
+  border-color: #4b5563;
+}
+button:active {
+  transform: translateY(1px);
+}
+
+.gauge-line {
+  height: 14px;
+  background: #1f2937;
+  border-radius: 8px;
+  position: relative;
+  border: 1px solid #374151;
+}
+
+/* Center numeric text */
+input[type="number"] {
+  text-align: center;
+}
+
+/* File selector styles */
+.file-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.file-caption {
+  color: #9ca3af;
+  font-weight: 500;
+}
+
+/* Canvas container tweaks */
+.canvas-card {
+  overflow: hidden;
+  background: #111827;
+}
+
+/* Per-visual settings table layout */
+.settings-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 12px 8px;
+}
+
+.settings-table td {
+  vertical-align: middle;
+  padding: 0;
+}
+
+.settings-table .visual-name-cell {
+  font-weight: 700;
+  color: #f8fafc;
+  width: 80px;
+  text-align: left;
+}
+
+.settings-table .label-cell {
+  font-weight: 500;
+  color: #e2e8f0;
+  width: 70px;
+  text-align: left;
+}
+
+.settings-table .input-cell {
+  width: 90px;
+}
+
+.settings-label {
+  font-weight: 500;
+  color: #e2e8f0;
+}
+
+.settings-input {
+  width: 84px;
+}
+
+.settings-color {
+  width: 40px;
+  height: 32px;
+}
+
+span {
+  color: #e2e8f0;
+}
+
+/* Progress bar styling */
+.progress-bar {
+  background: #1f2937;
+  border-radius: 4px;
+  height: 8px;
+}
+
+.progress-fill {
+  background: #3b82f6;
+  border-radius: 4px;
+  height: 8px;
+  transition: width 0.3s ease;
 }
 
 .logo {
