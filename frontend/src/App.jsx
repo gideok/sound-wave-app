@@ -48,6 +48,7 @@ function App() {
     { id: 'circular', label: 'Spectrum (Circular)' },
     { id: 'mirrored', label: 'Waveform (Mirrored Bars)' },
     { id: 'rms', label: 'Waveform (RMS Curve)' },
+    { id: 'wave3d', label: 'Waveform (3D Ridge)' },
   ]
   const [selectedVis, setSelectedVis] = useState(['line'])
   const [layoutMode, setLayoutMode] = useState('overlay') // 'overlay' | 'split'
@@ -60,6 +61,7 @@ function App() {
     circular: { color: '#a78bfa', thickness: 2, sensitivity: 1.0, radiusScale: 0.6, segments: 128 },
     mirrored: { color: '#ff375f', thickness: 1, sensitivity: 1.0, columns: 220 },
     rms: { color: '#ffd60a', thickness: 2, window: 32 },
+    wave3d: { color: '#5ac8fa', shadow: '#0a1025', highlight: '#9ad8ff', layers: 12, depth: 8, tilt: 0.4, sensitivity: 1.0 },
   })
 
   const audioRef = useRef(null)
@@ -266,6 +268,7 @@ function App() {
         if (id === 'circular') drawCircularSpectrum(canvas, freqData, visSettings.circular)
         if (id === 'mirrored') drawMirroredBars(canvas, timeData, visSettings.mirrored)
         if (id === 'rms') drawRmsCurve(canvas, timeData, visSettings.rms)
+        if (id === 'wave3d') drawWave3D(canvas, timeData, visSettings.wave3d)
       })
       Object.keys(splitCanvasRefs.current).forEach((id) => {
         if (!selectedVis.includes(id)) {
@@ -300,6 +303,7 @@ function App() {
     if (selectedVis.includes('circular')) drawCircularSpectrum(canvas, freqData, visSettings.circular)
     if (selectedVis.includes('mirrored')) drawMirroredBars(canvas, timeData, visSettings.mirrored)
     if (selectedVis.includes('rms')) drawRmsCurve(canvas, timeData, visSettings.rms)
+    if (selectedVis.includes('wave3d')) drawWave3D(canvas, timeData, visSettings.wave3d)
 
     if (duration > 0 && audioRef.current) {
       const progress = Math.min(1, audioRef.current.currentTime / duration)
@@ -417,6 +421,63 @@ function App() {
       else ctx.lineTo(x, y)
     }
     ctx.stroke()
+  }
+
+  const drawWave3D = (canvas, timeData, settings) => {
+    const { color, shadow = '#0a1025', highlight = '#9ad8ff', layers = 12, depth = 8, tilt = 0.4, sensitivity = 1.0 } = settings
+    const { ctx, width, height } = ensureCanvasSize(canvas, 300)
+    const mid = Math.floor(height / 2)
+
+    // base path generation from timeData
+    const slice = timeData.length / width
+    const waveY = new Array(width)
+    for (let x = 0; x < width; x++) {
+      const v = (timeData[Math.floor(x * slice)] / 128.0 - 1.0) * sensitivity
+      waveY[x] = mid + v * (mid - 10)
+    }
+
+    // draw layered ridges back-to-front for a faux 3D effect
+    for (let i = layers - 1; i >= 0; i--) {
+      const offsetY = Math.round((i - (layers - 1)) * depth)
+      const offsetX = Math.round((i - (layers - 1)) * tilt * 10)
+
+      // gradient per layer
+      const grad = ctx.createLinearGradient(0, mid - 60 + offsetY, 0, mid + 60 + offsetY)
+      const t = i / Math.max(1, layers - 1)
+      const mix = (a, b, p) => a + (b - a) * p
+      const parseHex = (h) => {
+        const s = h.startsWith('#') ? h.slice(1) : h
+        return [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)]
+      }
+      const toHex = (r, g, b) => `#${[r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')}`
+      const cBase = parseHex(color)
+      const cHi = parseHex(highlight)
+      const cLo = parseHex(shadow)
+      const topCol = toHex(mix(cHi[0], cBase[0], t), mix(cHi[1], cBase[1], t), mix(cHi[2], cBase[2], t))
+      const botCol = toHex(mix(cBase[0], cLo[0], t), mix(cBase[1], cLo[1], t), mix(cBase[2], cLo[2], t))
+      grad.addColorStop(0, topCol)
+      grad.addColorStop(1, botCol)
+
+      ctx.fillStyle = grad
+      ctx.beginPath()
+      ctx.moveTo(0 + offsetX, height + 2)
+      for (let x = 0; x < width; x++) {
+        ctx.lineTo(x + offsetX, waveY[x] + offsetY)
+      }
+      ctx.lineTo(width + offsetX, height + 2)
+      ctx.closePath()
+      ctx.fill()
+
+      // subtle rim light
+      ctx.strokeStyle = topCol
+      ctx.lineWidth = i === 0 ? 2 : 1
+      ctx.beginPath()
+      for (let x = 0; x < width; x += 2) {
+        const y = waveY[x] + offsetY
+        ctx.lineTo(x + offsetX, y)
+      }
+      ctx.stroke()
+    }
   }
 
   const onTogglePlay = async () => {
@@ -838,6 +899,25 @@ function App() {
             {numberInput(visSettings.rms.thickness, (v) => updateVisSetting('rms', 'thickness', v), { min: 1, max: 6, step: 1, style: { width: 64 } })}
             <label>Window</label>
             {numberInput(visSettings.rms.window, (v) => updateVisSetting('rms', 'window', v), { min: 8, max: 256, step: 4, style: { width: 80 } })}
+          </div>
+        )}
+        {selectedVis.includes('wave3d') && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <b>Wave 3D</b>
+            <label>Color</label>
+            <input type="color" value={visSettings.wave3d.color} onChange={(e) => updateVisSetting('wave3d', 'color', e.target.value)} />
+            <label>Highlight</label>
+            <input type="color" value={visSettings.wave3d.highlight} onChange={(e) => updateVisSetting('wave3d', 'highlight', e.target.value)} />
+            <label>Shadow</label>
+            <input type="color" value={visSettings.wave3d.shadow} onChange={(e) => updateVisSetting('wave3d', 'shadow', e.target.value)} />
+            <label>Layers</label>
+            {numberInput(visSettings.wave3d.layers, (v) => updateVisSetting('wave3d', 'layers', Math.max(3, Math.min(24, v))), { min: 3, max: 24, step: 1, style: { width: 80 } })}
+            <label>Depth</label>
+            {numberInput(visSettings.wave3d.depth, (v) => updateVisSetting('wave3d', 'depth', Math.max(2, Math.min(24, v))), { min: 2, max: 24, step: 1, style: { width: 80 } })}
+            <label>Tilt</label>
+            {numberInput(visSettings.wave3d.tilt, (v) => updateVisSetting('wave3d', 'tilt', Math.max(0, Math.min(1.5, v))), { min: 0, max: 1.5, step: 0.05, style: { width: 80 } })}
+            <label>Sens</label>
+            {numberInput(visSettings.wave3d.sensitivity, (v) => updateVisSetting('wave3d', 'sensitivity', Math.max(0.1, Math.min(5, v))), { min: 0.1, max: 5, step: 0.1, style: { width: 80 } })}
           </div>
         )}
       </div>
