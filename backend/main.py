@@ -14,6 +14,7 @@ import threading
 import uuid
 import re
 from typing import Dict, Any, Optional
+import json
 
 try:
 	# Prefer bundled ffmpeg from imageio-ffmpeg if available
@@ -174,6 +175,178 @@ def _probe_duration_seconds(input_path: Path) -> Optional[float]:
 		return None
 	return None
 
+
+def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+	try:
+		start = text.find("{")
+		end = text.rfind("}")
+		if start != -1 and end != -1 and end > start:
+			block = text[start : end + 1]
+			return json.loads(block)
+	except Exception:
+		return None
+	return None
+
+
+def _measure_lufs_first_pass(input_path: Path, target_i: float = -14.0, target_tp: float = -1.5, target_lra: float = 11.0) -> Dict[str, Any]:
+	"""
+	Run ffmpeg loudnorm in analysis mode to measure integrated loudness (LUFS), true-peak, and LRA.
+	Returns a dict with keys like input_i, input_tp, input_lra, input_thresh, target_offset, etc.
+	"""
+	cmd = [
+		_FFMPEG_EXE,
+		"-hide_banner",
+		"-nostats",
+		"-i",
+		str(input_path),
+		"-filter:a",
+		f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json",
+		"-f",
+		"null",
+		"-",
+	]
+	proc = subprocess.run(
+		cmd,
+		stdout=subprocess.PIPE,
+		stderr=subprocess.PIPE,
+		text=True,
+		encoding="utf-8",
+		errors="ignore",
+	)
+	if proc.returncode != 0:
+		raise RuntimeError("ffmpeg loudnorm analysis failed")
+	json_data = _extract_json_from_text(proc.stderr or proc.stdout)
+	if not json_data:
+		raise RuntimeError("Failed to parse loudnorm analysis output")
+	return json_data
+
+
+def _build_loudnorm_filter_second_pass(measured: Dict[str, Any], target_i: float = -14.0, target_tp: float = -1.5, target_lra: float = 11.0) -> str:
+	# loudnorm second pass expects these measured params (note case sensitivity)
+	input_i = measured.get("input_i") or measured.get("measured_I")
+	input_tp = measured.get("input_tp") or measured.get("measured_TP")
+	input_lra = measured.get("input_lra") or measured.get("measured_LRA")
+	input_thresh = measured.get("input_thresh") or measured.get("measured_thresh")
+	target_offset = measured.get("target_offset") or measured.get("offset")
+	return (
+		"loudnorm="
+		f"I={target_i}:TP={target_tp}:LRA={target_lra}:"
+		f"measured_I={input_i}:measured_TP={input_tp}:measured_LRA={input_lra}:"
+		f"measured_thresh={input_thresh}:offset={target_offset}:"
+		"linear=true:print_format=summary"
+	)
+
+
+# ----------------------
+# LUFS 측정 및 정규화 API
+# ----------------------
+
+@app.post("/api/audio/measure-lufs")
+async def measure_lufs(file: UploadFile = File(...)):
+	if not _FFMPEG_EXE or (Path(_FFMPEG_EXE).exists() is False and shutil.which(_FFMPEG_EXE) is None):
+		raise HTTPException(status_code=500, detail="ffmpeg 실행 파일을 찾을 수 없습니다. ffmpeg 또는 imageio-ffmpeg를 설치하세요.")
+
+	# Save upload to temp file
+	tmp_dir = Path(tempfile.mkdtemp(prefix="lufs_measure_"))
+	input_path = tmp_dir / (Path(file.filename).name or "input")
+	try:
+		with input_path.open("wb") as f:
+			while True:
+				chunk = await file.read(1024 * 1024)
+				if not chunk:
+					break
+				f.write(chunk)
+
+		measured = _measure_lufs_first_pass(input_path)
+		return measured
+	except Exception as e:
+		raise HTTPException(status_code=500, detail=str(e))
+	finally:
+		try:
+			if input_path.exists():
+				input_path.unlink()
+			if tmp_dir.exists():
+				shutil.rmtree(tmp_dir, ignore_errors=True)
+		except Exception:
+			pass
+
+
+@app.post("/api/audio/normalize")
+async def normalize_audio(
+	bg: BackgroundTasks,
+	file: UploadFile = File(...),
+	target_lufs: float = -14.0,
+	target_tp: float = -1.5,
+	target_lra: float = 11.0,
+):
+	"""
+	두 패스 loudnorm을 이용하여 -14 LUFS(기본값)로 정규화된 오디오를 반환합니다.
+	반환 포맷은 WAV(PCM 16-bit) 입니다.
+	"""
+	if not _FFMPEG_EXE or (Path(_FFMPEG_EXE).exists() is False and shutil.which(_FFMPEG_EXE) is None):
+		raise HTTPException(status_code=500, detail="ffmpeg 실행 파일을 찾을 수 없습니다. ffmpeg 또는 imageio-ffmpeg를 설치하세요.")
+
+	tmp_dir = Path(tempfile.mkdtemp(prefix="normalize_"))
+	input_path = tmp_dir / (Path(file.filename).name or "input")
+	output_path = tmp_dir / f"{Path(file.filename).stem or 'output'}_norm.wav"
+
+	try:
+		# Save upload
+		with input_path.open("wb") as f:
+			while True:
+				chunk = await file.read(1024 * 1024)
+				if not chunk:
+					break
+				f.write(chunk)
+
+		# Pass 1: measure
+		measured = _measure_lufs_first_pass(input_path, target_i=target_lufs, target_tp=target_tp, target_lra=target_lra)
+		# Pass 2: apply with measured params
+		filter_second = _build_loudnorm_filter_second_pass(measured, target_i=target_lufs, target_tp=target_tp, target_lra=target_lra)
+		cmd2 = [
+			_FFMPEG_EXE,
+			"-y",
+			"-hide_banner",
+			"-i",
+			str(input_path),
+			"-filter:a",
+			filter_second,
+			"-c:a",
+			"pcm_s16le",
+			str(output_path),
+		]
+		proc2 = subprocess.run(
+			cmd2,
+			stdout=subprocess.PIPE,
+			stderr=subprocess.PIPE,
+			text=True,
+			encoding="utf-8",
+			errors="ignore",
+		)
+		if proc2.returncode != 0 or not output_path.exists():
+			detail = (proc2.stderr or "").splitlines()[-50:]
+			raise HTTPException(status_code=500, detail="ffmpeg loudnorm failed: " + "\n".join(detail))
+
+		def _cleanup():
+			try:
+				if output_path.exists():
+					output_path.unlink()
+				if input_path.exists():
+					input_path.unlink()
+				if tmp_dir.exists():
+					shutil.rmtree(tmp_dir, ignore_errors=True)
+			except Exception:
+				pass
+
+		bg.add_task(_cleanup)
+		return FileResponse(path=str(output_path), filename=str(output_path.name), media_type="audio/wav")
+
+	except HTTPException:
+		shutil.rmtree(tmp_dir, ignore_errors=True)
+		raise
+	except Exception as e:
+		shutil.rmtree(tmp_dir, ignore_errors=True)
+		raise HTTPException(status_code=500, detail=str(e))
 
 def _run_ffmpeg_async(job_id: str, input_path: Path, output_path: Path, width: int, height: int, color: str, background: str, fps: int):
 	try:

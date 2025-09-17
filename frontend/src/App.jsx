@@ -4,14 +4,23 @@ import './App.css'
 function App() {
   const [selectedFile, setSelectedFile] = useState(null)
   const [audioUrl, setAudioUrl] = useState('')
-  const [audioBuffer, setAudioBuffer] = useState(null)
+  // removed unused audioBuffer state
   const [waveform, setWaveform] = useState([])
   const [duration, setDuration] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [isRecording, setIsRecording] = useState(false)
   const [recordUrl, setRecordUrl] = useState('')
-  const [isRenderingMp4, setIsRenderingMp4] = useState(false)
+  // removed unused isRenderingMp4 state
+
+  // LUFS analysis/normalization state
+  const [isMeasuring, setIsMeasuring] = useState(false)
+  const [lufsData, setLufsData] = useState(null)
+  const [targetLufs, setTargetLufs] = useState(-14)
+  const [targetTp, setTargetTp] = useState(-1.5)
+  const [targetLra, setTargetLra] = useState(11)
+  const [isNormalizing, setIsNormalizing] = useState(false)
+  const [normalizedUrl, setNormalizedUrl] = useState('')
 
   // Render settings
   const [widthPx, setWidthPx] = useState(1280)
@@ -22,7 +31,7 @@ function App() {
   const [preset, setPreset] = useState('custom')
 
   // Async render state
-  const [jobId, setJobId] = useState('')
+  // removed unused jobId state
   const [jobProgress, setJobProgress] = useState(0)
   const [jobStatus, setJobStatus] = useState('idle')
 
@@ -67,6 +76,8 @@ function App() {
     if (!file) return
     setSelectedFile(file)
     setRecordUrl('')
+    setLufsData(null)
+    setNormalizedUrl('')
 
     const url = URL.createObjectURL(file)
     setAudioUrl(url)
@@ -101,7 +112,6 @@ function App() {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)()
         const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0))
         if (isCancelled) return
-        setAudioBuffer(decoded)
         setDuration(decoded.duration)
 
         const peaks = computeWaveformPeaks(decoded, 1500)
@@ -143,10 +153,10 @@ function App() {
       const analyser = analyserNodeRef.current
       timeDataRef.current = new Uint8Array(analyser.fftSize)
       freqDataRef.current = new Uint8Array(analyser.frequencyBinCount)
-    } catch (e) {
-      // Some browsers may block multiple connections; ignore if already connected
+    } catch (err) {
+      console.debug('Analyser connect skipped', err)
     }
-  }, [audioRef.current])
+  }, [])
 
   // Draw static waveform preview and keep playhead updated
   useEffect(() => {
@@ -408,7 +418,7 @@ function App() {
     const audio = audioRef.current
     if (!audio) return
     if (analyserCtxRef.current && analyserCtxRef.current.state === 'suspended') {
-      try { await analyserCtxRef.current.resume() } catch {}
+      try { await analyserCtxRef.current.resume() } catch (err) { console.debug('AudioContext resume failed', err) }
     }
     if (audio.paused) {
       try {
@@ -484,7 +494,7 @@ function App() {
   const startRenderAsync = async () => {
     if (!selectedFile) return
     try {
-      setJobId(''); setJobProgress(0); setJobStatus('starting')
+      setJobProgress(0); setJobStatus('starting')
       const form = new FormData()
       form.append('file', selectedFile)
       const qs = new URLSearchParams({
@@ -494,13 +504,102 @@ function App() {
       const resp = await fetch('/api/render/start?' + qs.toString(), { method: 'POST', body: form })
       if (!resp.ok) throw new Error(await resp.text())
       const data = await resp.json()
-      setJobId(data.job_id)
       setJobStatus('running')
       pollProgress(data.job_id)
     } catch (e) {
       setJobStatus('failed')
       alert('Start failed: ' + (e?.message || e))
     }
+  }
+
+  const measureLUFS = async () => {
+    if (!selectedFile) return
+    try {
+      setIsMeasuring(true)
+      setLufsData(null)
+      const form = new FormData()
+      form.append('file', selectedFile)
+      const resp = await fetch('/api/audio/measure-lufs', { method: 'POST', body: form })
+      if (!resp.ok) throw new Error(await resp.text())
+      const data = await resp.json()
+      setLufsData(data)
+    } catch (e) {
+      alert('LUFS 측정 실패: ' + (e?.message || e))
+    } finally {
+      setIsMeasuring(false)
+    }
+  }
+
+  const normalizeToTarget = async () => {
+    if (!selectedFile) return
+    try {
+      setIsNormalizing(true)
+      const form = new FormData()
+      form.append('file', selectedFile)
+      const qs = new URLSearchParams({
+        target_lufs: String(targetLufs),
+        target_tp: String(targetTp),
+        target_lra: String(targetLra),
+      })
+      const resp = await fetch('/api/audio/normalize?' + qs.toString(), { method: 'POST', body: form })
+      if (!resp.ok) throw new Error(await resp.text())
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      setNormalizedUrl(url)
+      // Auto download
+      const a = document.createElement('a')
+      a.href = url
+      a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + `_norm_${targetLufs}LUFS.wav`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } catch (e) {
+      alert('정규화 실패: ' + (e?.message || e))
+    } finally {
+      setIsNormalizing(false)
+    }
+  }
+
+  const extractNumber = (obj, a, b) => {
+    if (!obj) return undefined
+    const v = obj[a]
+    if (v !== undefined && v !== null && v !== '') return Number(v)
+    const w = obj[b]
+    if (w !== undefined && w !== null && w !== '') return Number(w)
+    return undefined
+  }
+
+  const measuredI = extractNumber(lufsData || {}, 'input_i', 'measured_I')
+  const measuredTP = extractNumber(lufsData || {}, 'input_tp', 'measured_TP')
+  const measuredLRA = extractNumber(lufsData || {}, 'input_lra', 'measured_LRA')
+
+  const lufsBar = () => {
+    // Visualize range from -36 to 0 LUFS
+    const minLufs = -36
+    const maxLufs = 0
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+    const toPct = (v) => ((clamp(v, minLufs, maxLufs) - minLufs) / (maxLufs - minLufs)) * 100
+    const targetPct = toPct(targetLufs)
+    const measuredPct = measuredI !== undefined ? toPct(measuredI) : null
+    return (
+      <div style={{ width: 520, maxWidth: '95%', position: 'relative' }}>
+        <div style={{ height: 14, background: '#222b4a', borderRadius: 8, position: 'relative' }}>
+          <div style={{ position: 'absolute', left: `${targetPct}%`, top: -4, width: 2, height: 22, background: '#ff9f0a' }} />
+          {measuredPct !== null && (
+            <div style={{ position: 'absolute', left: `${measuredPct}%`, top: -4, width: 2, height: 22, background: '#5ac8fa' }} />
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#99a2d1', marginTop: 4 }}>
+          <span>-36</span>
+          <span>-24</span>
+          <span>-18</span>
+          <span>-14</span>
+          <span>-12</span>
+          <span>-6</span>
+          <span>0</span>
+        </div>
+      </div>
+    )
   }
 
   const pollProgress = async (id) => {
@@ -592,6 +691,40 @@ function App() {
         <input type="color" value={waveColor} onChange={(e) => setWaveColor(e.target.value)} />
         <label>BG:</label>
         <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} />
+      </div>
+
+      {/* LUFS Analyzer */}
+      <div style={{ border: '1px solid #2a2a3b', borderRadius: 8, padding: 16, maxWidth: 980, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <h2 style={{ margin: 0 }}>LUFS Analyzer</h2>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button disabled={!selectedFile || isMeasuring} onClick={measureLUFS}>
+            {isMeasuring ? 'Measuring…' : 'Measure LUFS'}
+          </button>
+          {lufsData && (
+            <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span><b>I</b>: {measuredI?.toFixed?.(2)} LUFS</span>
+              <span><b>TP</b>: {measuredTP?.toFixed?.(2)} dBTP</span>
+              <span><b>LRA</b>: {measuredLRA?.toFixed?.(2)} dB</span>
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+          {lufsBar()}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label>Target LUFS</label>
+            {numberInput(targetLufs, setTargetLufs, { step: 0.5, style: { width: 96 } })}
+            <label>TP</label>
+            {numberInput(targetTp, setTargetTp, { step: 0.1, style: { width: 80 } })}
+            <label>LRA</label>
+            {numberInput(targetLra, setTargetLra, { step: 0.5, style: { width: 80 } })}
+            <button disabled={!selectedFile || isNormalizing} onClick={normalizeToTarget}>
+              {isNormalizing ? 'Normalizing…' : 'Normalize & Download'}
+            </button>
+          </div>
+        </div>
+        {normalizedUrl && (
+          <audio src={normalizedUrl} controls style={{ width: '100%' }} />
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -708,7 +841,7 @@ function App() {
       </div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
-        <button disabled={!selectedFile || isRenderingMp4} onClick={startRenderAsync}>
+        <button disabled={!selectedFile} onClick={startRenderAsync}>
           {jobStatus === 'running' || jobStatus === 'starting' ? 'Rendering...' : 'Render MP4 (Async)'}
         </button>
       </div>
