@@ -193,31 +193,53 @@ def _measure_lufs_first_pass(input_path: Path, target_i: float = -14.0, target_t
 	Run ffmpeg loudnorm in analysis mode to measure integrated loudness (LUFS), true-peak, and LRA.
 	Returns a dict with keys like input_i, input_tp, input_lra, input_thresh, target_offset, etc.
 	"""
-	cmd = [
-		_FFMPEG_EXE,
-		"-hide_banner",
-		"-nostats",
-		"-i",
-		str(input_path),
-		"-filter:a",
-		f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json",
-		"-f",
-		"null",
-		"-",
-	]
-	proc = subprocess.run(
-		cmd,
-		stdout=subprocess.PIPE,
-		stderr=subprocess.PIPE,
-		text=True,
-		encoding="utf-8",
-		errors="ignore",
+	def _run_with_filter(filter_expr: str):
+		cmd_local = [
+			_FFMPEG_EXE,
+			"-hide_banner",
+			"-nostats",
+			"-i",
+			str(input_path),
+			"-filter:a",
+			filter_expr,
+			"-f",
+			"null",
+			"-",
+		]
+		return subprocess.run(
+			cmd_local,
+			stdout=subprocess.PIPE,
+			stderr=subprocess.PIPE,
+			text=True,
+			encoding="utf-8",
+			errors="ignore",
+		)
+
+	# First try high-precision soxr
+	filter_soxr = (
+		"aresample=48000:resampler=soxr:precision=28,"
+		f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json"
 	)
+	proc = _run_with_filter(filter_soxr)
+
+	# If soxr not available or failed, fallback to default resampler
+	if proc.returncode != 0 or not _extract_json_from_text((proc.stderr or "") + (proc.stdout or "")):
+		filter_fallback = (
+			"aresample=48000,"
+			f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json"
+		)
+		proc = _run_with_filter(filter_fallback)
+
+	combined = (proc.stderr or "") + "\n" + (proc.stdout or "")
 	if proc.returncode != 0:
-		raise RuntimeError("ffmpeg loudnorm analysis failed")
-	json_data = _extract_json_from_text(proc.stderr or proc.stdout)
+		# include tail of stderr to help diagnose
+		tail = "\n".join((proc.stderr or combined).splitlines()[-50:])
+		raise RuntimeError(f"ffmpeg loudnorm analysis failed: {tail}")
+	json_data = _extract_json_from_text(combined)
 	if not json_data:
-		raise RuntimeError("Failed to parse loudnorm analysis output")
+		# include combined output tail for debugging
+		tail = "\n".join(combined.splitlines()[-80:])
+		raise RuntimeError(f"Failed to parse loudnorm analysis output. Tail: {tail}")
 	return json_data
 
 
@@ -278,6 +300,11 @@ async def normalize_audio(
 	target_lufs: float = -14.0,
 	target_tp: float = -1.5,
 	target_lra: float = 11.0,
+	pre_compress: bool = False,
+	compress_threshold_db: float = -18.0,
+	compress_ratio: float = 3.0,
+	compress_attack_ms: int = 20,
+	compress_release_ms: int = 200,
 ):
 	"""
 	두 패스 loudnorm을 이용하여 -14 LUFS(기본값)로 정규화된 오디오를 반환합니다.
@@ -303,6 +330,17 @@ async def normalize_audio(
 		measured = _measure_lufs_first_pass(input_path, target_i=target_lufs, target_tp=target_tp, target_lra=target_lra)
 		# Pass 2: apply with measured params
 		filter_second = _build_loudnorm_filter_second_pass(measured, target_i=target_lufs, target_tp=target_tp, target_lra=target_lra)
+		# Build optional pre-compression to better approach desired LRA
+		pre_chain = []
+		if pre_compress:
+			# ac compressor before loudnorm to reduce excessive dynamics
+			# threshold in dB, ratio unitless
+			pre_chain.append(
+				f"acompressor=threshold={compress_threshold_db}dB:ratio={compress_ratio}:attack={compress_attack_ms}:release={compress_release_ms}"
+			)
+		# Match measurement path: apply high-quality resample before loudnorm
+		chain = ["aresample=48000:resampler=soxr:precision=28"] + pre_chain + [filter_second]
+		apply_filter = ",".join(chain)
 		cmd2 = [
 			_FFMPEG_EXE,
 			"-y",
@@ -310,7 +348,7 @@ async def normalize_audio(
 			"-i",
 			str(input_path),
 			"-filter:a",
-			filter_second,
+			apply_filter,
 			"-c:a",
 			"pcm_s16le",
 			str(output_path),
@@ -324,8 +362,32 @@ async def normalize_audio(
 			errors="ignore",
 		)
 		if proc2.returncode != 0 or not output_path.exists():
-			detail = (proc2.stderr or "").splitlines()[-50:]
-			raise HTTPException(status_code=500, detail="ffmpeg loudnorm failed: " + "\n".join(detail))
+			# Fallback without soxr (in case filter not supported)
+			chain_fb = ["aresample=48000"] + pre_chain + [filter_second]
+			apply_filter_fb = ",".join(chain_fb)
+			cmd2_fb = [
+				_FFMPEG_EXE,
+				"-y",
+				"-hide_banner",
+				"-i",
+				str(input_path),
+				"-filter:a",
+				apply_filter_fb,
+				"-c:a",
+				"pcm_s16le",
+				str(output_path),
+			]
+			proc2 = subprocess.run(
+				cmd2_fb,
+				stdout=subprocess.PIPE,
+				stderr=subprocess.PIPE,
+				text=True,
+				encoding="utf-8",
+				errors="ignore",
+			)
+			if proc2.returncode != 0 or not output_path.exists():
+				detail = (proc2.stderr or "").splitlines()[-50:]
+				raise HTTPException(status_code=500, detail="ffmpeg loudnorm failed: " + "\n".join(detail))
 
 		def _cleanup():
 			try:

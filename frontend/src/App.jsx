@@ -16,11 +16,16 @@ function App() {
   // LUFS analysis/normalization state
   const [isMeasuring, setIsMeasuring] = useState(false)
   const [lufsData, setLufsData] = useState(null)
-  const [targetLufs, setTargetLufs] = useState(-14)
-  const [targetTp, setTargetTp] = useState(-1.5)
-  const [targetLra, setTargetLra] = useState(11)
+  const [targetLufs, setTargetLufs] = useState(-15)
+  const [targetTp, setTargetTp] = useState(-1.0)
+  const [targetLra, setTargetLra] = useState(7)
   const [isNormalizing, setIsNormalizing] = useState(false)
   const [normalizedUrl, setNormalizedUrl] = useState('')
+  const [preCompress, setPreCompress] = useState(false)
+  const [compThreshold, setCompThreshold] = useState(-18)
+  const [compRatio, setCompRatio] = useState(3)
+  const [compAttack, setCompAttack] = useState(20)
+  const [compRelease, setCompRelease] = useState(200)
 
   // Render settings
   const [widthPx, setWidthPx] = useState(1280)
@@ -540,6 +545,11 @@ function App() {
         target_lufs: String(targetLufs),
         target_tp: String(targetTp),
         target_lra: String(targetLra),
+        pre_compress: String(preCompress),
+        compress_threshold_db: String(compThreshold),
+        compress_ratio: String(compRatio),
+        compress_attack_ms: String(compAttack),
+        compress_release_ms: String(compRelease),
       })
       const resp = await fetch('/api/audio/normalize?' + qs.toString(), { method: 'POST', body: form })
       if (!resp.ok) throw new Error(await resp.text())
@@ -574,8 +584,8 @@ function App() {
   const measuredLRA = extractNumber(lufsData || {}, 'input_lra', 'measured_LRA')
 
   const lufsBar = () => {
-    // Visualize range from -36 to 0 LUFS
-    const minLufs = -36
+    // Visualize wider range from -48 to 0 LUFS
+    const minLufs = -48
     const maxLufs = 0
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
     const toPct = (v) => ((clamp(v, minLufs, maxLufs) - minLufs) / (maxLufs - minLufs)) * 100
@@ -702,9 +712,9 @@ function App() {
           </button>
           {lufsData && (
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span><b>I</b>: {measuredI?.toFixed?.(2)} LUFS</span>
-              <span><b>TP</b>: {measuredTP?.toFixed?.(2)} dBTP</span>
-              <span><b>LRA</b>: {measuredLRA?.toFixed?.(2)} dB</span>
+              <span><b>I</b>: {Number.isFinite(measuredI) ? measuredI.toFixed(3) : '-'} LUFS</span>
+              <span><b>TP</b>: {Number.isFinite(measuredTP) ? measuredTP.toFixed(3) : '-'} dBTP</span>
+              <span><b>LRA</b>: {Number.isFinite(measuredLRA) ? measuredLRA.toFixed(3) : '-'} dB</span>
             </div>
           )}
         </div>
@@ -717,6 +727,21 @@ function App() {
             {numberInput(targetTp, setTargetTp, { step: 0.1, style: { width: 80 } })}
             <label>LRA</label>
             {numberInput(targetLra, setTargetLra, { step: 0.5, style: { width: 80 } })}
+            <label style={{ marginLeft: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={preCompress} onChange={(e) => setPreCompress(e.target.checked)} /> Tighten dynamics
+            </label>
+            {preCompress && (
+              <>
+                <label>Thr (dB)</label>
+                {numberInput(compThreshold, setCompThreshold, { step: 1, style: { width: 80 } })}
+                <label>Ratio</label>
+                {numberInput(compRatio, setCompRatio, { step: 0.5, style: { width: 80 } })}
+                <label>Atk (ms)</label>
+                {numberInput(compAttack, setCompAttack, { step: 5, style: { width: 80 } })}
+                <label>Rel (ms)</label>
+                {numberInput(compRelease, setCompRelease, { step: 10, style: { width: 80 } })}
+              </>
+            )}
             <button disabled={!selectedFile || isNormalizing} onClick={normalizeToTarget}>
               {isNormalizing ? 'Normalizing…' : 'Normalize & Download'}
             </button>
