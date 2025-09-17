@@ -1,0 +1,62 @@
+# Root ignores
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*.log
+.cache/
+.idea/
+.vscode/
+
+# Env files
+.env
+.env.*
+.env.local
+.env.*.local
+*.env
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+coverage.xml
+htmlcov/
+.python-version
+
+# Virtual environments
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.eslintcache
+frontend/coverage/
+
+yarn-error.log*
+npm-debug.log*
+pnpm-debug.log*
+
+# Build/Temp
+build/
+dist/
+.tmp/
+tmp/
+temp/
+
+# Media/outputs (optional)
+*.webm
+*.mp4
+*.wav
+*.mp3
+
+# ImageIO / ffmpeg caches (if any)
+~$*
