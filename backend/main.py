@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import UploadFile, File, HTTPException, BackgroundTasks, Query
+from fastapi import UploadFile, File, HTTPException, BackgroundTasks, Query, Form
 from fastapi.responses import FileResponse, JSONResponse
 
 import os
@@ -1033,65 +1033,71 @@ async def generate_score(
 		midi.save(str(midi_path))
 		tlog(f"MIDI written: {midi_path.name}")
 
-		# Convert MIDI to MusicXML via music21
-		from music21 import converter
-		s = converter.parse(str(midi_path))
-		musicxml_path = tmp_dir / "vocal_melody.musicxml"
-		s.write('musicxml', fp=str(musicxml_path))
-		tlog(f"MusicXML written: {musicxml_path.name}")
+		# Convert MIDI to MusicXML via music21 (optional)
+		musicxml_path = None
+		try:
+			from music21 import converter  # type: ignore
+			s = converter.parse(str(midi_path))
+			musicxml_path = tmp_dir / "vocal_melody.musicxml"
+			s.write('musicxml', fp=str(musicxml_path))
+			tlog(f"MusicXML written: {musicxml_path.name}")
+		except Exception as _:
+			tlog("music21 not available; skipping MusicXML generation.")
 
-		# Try to render PDF from MusicXML using MuseScore, if available
+		# Try to render PDF from MusicXML using MuseScore or Verovio/CairoSVG if MusicXML exists
 		pdf_path = tmp_dir / "vocal_melody.pdf"
-		musescore_candidates = [
-			shutil.which("MuseScore4.exe"),
-			shutil.which("MuseScore3.exe"),
-			shutil.which("MuseScore.exe"),
-			shutil.which("musescore4.exe"),
-			shutil.which("musescore3.exe"),
-			shutil.which("musescore.exe"),
-			shutil.which("mscore.exe"),
-		]
-		musescore_exe = next((p for p in musescore_candidates if p), None)
-		if musescore_exe and Path(musescore_exe).exists():
-			try:
-				# MuseScore CLI: musescore -o out.pdf in.musicxml
-				cmd_pdf = [musescore_exe, "-o", str(pdf_path), str(musicxml_path)]
-				proc_pdf = subprocess.run(cmd_pdf, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore")
-				if proc_pdf.returncode == 0 and pdf_path.exists():
-					tlog(f"PDF rendered with MuseScore: {pdf_path.name}")
-				else:
-					tlog("MuseScore PDF render failed, continuing without PDF.")
-			except Exception as _:
-				tlog("MuseScore not usable for PDF rendering; skipping.")
-		else:
-			# Fallback: Verovio (MusicXML->SVG) + CairoSVG (SVG->PDF)
-			try:
-				from verovio import toolkit as vr_toolkit
-				import cairosvg
-				# Configure Verovio (A4-ish page, auto height, reasonable scale)
-				tk = vr_toolkit.Toolkit()
-				tk.setOptions({
-					"pageHeight": 2970,   # ~ A4 at 10 units/mm
-					"pageWidth": 2100,
-					"adjustPageHeight": True,
-					"scale": 50
-				})
-				ok = tk.loadFile(str(musicxml_path))
-				if not ok:
-					raise RuntimeError("Verovio failed to load MusicXML")
-				svg = tk.renderToSVG(1)
-				# For multi-page, one could loop pages = krn.getPageCount(); here single page for brevity
-				cairosvg.svg2pdf(bytestring=svg.encode('utf-8'), write_to=str(pdf_path))
-				tlog(f"PDF rendered with Verovio/CairoSVG: {pdf_path.name}")
-			except Exception as _:
-				tlog("No MuseScore; Verovio/CairoSVG fallback failed or not installed. PDF skipped.")
+		if musicxml_path and Path(musicxml_path).exists():
+			musescore_candidates = [
+				shutil.which("MuseScore4.exe"),
+				shutil.which("MuseScore3.exe"),
+				shutil.which("MuseScore.exe"),
+				shutil.which("musescore4.exe"),
+				shutil.which("musescore3.exe"),
+				shutil.which("musescore.exe"),
+				shutil.which("mscore.exe"),
+			]
+			musescore_exe = next((p for p in musescore_candidates if p), None)
+			if musescore_exe and Path(musescore_exe).exists():
+				try:
+					# MuseScore CLI: musescore -o out.pdf in.musicxml
+					cmd_pdf = [musescore_exe, "-o", str(pdf_path), str(musicxml_path)]
+					proc_pdf = subprocess.run(cmd_pdf, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore")
+					if proc_pdf.returncode == 0 and pdf_path.exists():
+						tlog(f"PDF rendered with MuseScore: {pdf_path.name}")
+					else:
+						tlog("MuseScore PDF render failed, continuing without PDF.")
+				except Exception as _:
+					tlog("MuseScore not usable for PDF rendering; skipping.")
+			else:
+				# Fallback: Verovio (MusicXML->SVG) + CairoSVG (SVG->PDF)
+				try:
+					from verovio import toolkit as vr_toolkit  # type: ignore
+					import cairosvg  # type: ignore
+					# Configure Verovio (A4-ish page, auto height, reasonable scale)
+					tk = vr_toolkit.Toolkit()
+					tk.setOptions({
+						"pageHeight": 2970,   # ~ A4 at 10 units/mm
+						"pageWidth": 2100,
+						"adjustPageHeight": True,
+						"scale": 50
+					})
+					ok = tk.loadFile(str(musicxml_path))
+					if not ok:
+						raise RuntimeError("Verovio failed to load MusicXML")
+					svg = tk.renderToSVG(1)
+					# For multi-page, one could loop pages = krn.getPageCount(); here single page for brevity
+					cairosvg.svg2pdf(bytestring=svg.encode('utf-8'), write_to=str(pdf_path))
+					tlog(f"PDF rendered with Verovio/CairoSVG: {pdf_path.name}")
+				except Exception as _:
+					tlog("No MuseScore; Verovio/CairoSVG fallback failed or not installed. PDF skipped.")
 
 		# Zip
 		zip_path = tmp_dir / "vocal_score.zip"
 		import zipfile
 		with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
 			zipf.write(midi_path, midi_path.name)
-			zipf.write(musicxml_path, musicxml_path.name)
+			if musicxml_path and Path(musicxml_path).exists():
+				zipf.write(musicxml_path, Path(musicxml_path).name)
 			if pdf_path.exists():
 				zipf.write(pdf_path, pdf_path.name)
 		total = time.time() - start_ts
@@ -1105,6 +1111,278 @@ async def generate_score(
 		raise
 	except Exception as e:
 		shutil.rmtree(tmp_dir, ignore_errors=True)
+		raise HTTPException(status_code=500, detail=str(e))
+
+
+# ----------------------
+# Lyrics extraction (Korean/English) using Faster-Whisper
+# ----------------------
+
+def _write_lrc(segments, path: Path):
+	with path.open('w', encoding='utf-8') as f:
+		for seg in segments:
+			start = seg['start']
+			m = int(start // 60)
+			s = int(start % 60)
+			cs = int((start - int(start)) * 100)
+			ts = f"[{m:02d}:{s:02d}.{cs:02d}]"
+			f.write(ts + seg['text'].strip() + "\n")
+
+
+@app.post("/api/audio/extract-lyrics")
+async def extract_lyrics(
+	file: UploadFile = File(...),
+ 	language: str = "auto",  # auto | ko | en
+ 	model_size: str = "small",  # tiny|base|small|medium|large-v3
+ 	boost_vocals: bool = True,
+    return_lrc_only: bool = False,
+):
+	"""Separate vocals with Demucs then transcribe using Faster-Whisper with robust settings.
+	Returns ZIP (.lrc + .txt). Set boost_vocals=True to pre-filter/normalize for better recall.
+	"""
+	if not _DEMUCS_AVAILABLE:
+		raise HTTPException(status_code=500, detail="Demucs가 설치되지 않았습니다.")
+
+	work = Path(tempfile.mkdtemp(prefix="lyrics_"))
+	input_path = work / (Path(file.filename).name or "input")
+	out_dir = work / "out"; out_dir.mkdir(exist_ok=True)
+	try:
+		start_ts = time.time()
+		def tlog(msg: str):
+			print(f"[lyrics {datetime.datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+		tlog(f"starting lyrics extraction (model={model_size}, lang={language}, boost={boost_vocals})")
+		# save upload
+		with input_path.open('wb') as f:
+			while True:
+				chunk = await file.read(1024 * 1024)
+				if not chunk:
+					break
+				f.write(chunk)
+
+		# demucs vocals
+		vocals_wav = out_dir / "vocals.wav"
+		cmd = ["python", "-m", "demucs.separate", "-n", "htdemucs", "-d", "cpu", "-o", str(out_dir), str(input_path)]
+		proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+		if proc.returncode != 0:
+			raise HTTPException(status_code=500, detail="Demucs 실행 실패")
+		# locate vocals
+		found = None
+		for p in out_dir.rglob('*.wav'):
+			if p.stem.lower() == 'vocals':
+				found = p; break
+		if not found:
+			raise HTTPException(status_code=500, detail="보컬 파일을 찾지 못했습니다.")
+
+		# optional pre-processing to boost vocal intelligibility
+		clean_path = out_dir / "clean.wav"
+		if boost_vocals:
+			# bandpass + de-ess-ish high shelf, normalize
+			ff = [
+				_FFMPEG_EXE, "-y", "-i", str(found),
+				"-af",
+				"highpass=f=100, lowpass=f=8000, acompressor=threshold=-20dB:ratio=3:attack=5:release=50, loudnorm=I=-16:TP=-1.5:LRA=11",
+				"-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(clean_path)
+			]
+			proc2 = subprocess.run(ff, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+			if proc2.returncode == 0 and clean_path.exists():
+				audio_for_asr = str(clean_path)
+			else:
+				audio_for_asr = str(found)
+		else:
+			audio_for_asr = str(found)
+
+		# transcribe with robust settings
+		import importlib
+		try:
+			fw = importlib.import_module("faster_whisper")
+			WhisperModel = getattr(fw, "WhisperModel")
+		except Exception:
+			raise HTTPException(status_code=500, detail="faster-whisper가 설치되지 않았습니다. pip install faster-whisper")
+		device = "cuda" if shutil.which("nvidia-smi") else "cpu"
+		compute_type = "int8" if device == "cpu" else "float16"
+		model = WhisperModel(model_size, device=device, compute_type=compute_type)
+		lang = None
+		if language.lower() in ("ko", "en"):
+			lang = language.lower()
+		vad_params = {"min_silence_duration_ms": 200}
+		segments, info = model.transcribe(
+			audio_for_asr,
+			language=lang,
+			vad_filter=True,
+			vad_parameters=vad_params,
+			beam_size=5,
+			temperature=[0.0, 0.2, 0.4],
+			patience=0.1,
+			best_of=5,
+			no_speech_threshold=0.4,
+			condition_on_previous_text=True,
+			word_timestamps=False,
+			chunk_length=30,
+			prepend_punctuations='¿([{"\'“”',
+			append_punctuations='。．！!?,。',
+		)
+
+		seg_list = []
+		full_text = []
+		for seg in segments:
+			text = seg.text or ""
+			seg_list.append({"start": float(seg.start or 0.0), "end": float(seg.end or 0.0), "text": text})
+			full_text.append(text)
+
+		# Fallback retry without Demucs/VAD if we captured too little text
+		if len(" ".join(full_text).strip()) < 10:
+			segments2, _ = model.transcribe(str(input_path), language=lang, vad_filter=False, beam_size=5, temperature=[0.0,0.2,0.4], chunk_length=30)
+			seg_list = []
+			full_text = []
+			for seg in segments2:
+				text = seg.text or ""
+				seg_list.append({"start": float(seg.start or 0.0), "end": float(seg.end or 0.0), "text": text})
+				full_text.append(text)
+
+		lrc_path = work / "lyrics.lrc"
+		txt_path = work / "lyrics.txt"
+		_write_lrc(seg_list, lrc_path)
+		with txt_path.open('w', encoding='utf-8') as f:
+			f.write(" ".join(full_text).strip())
+
+		zip_path = work / "lyrics.zip"
+		import zipfile
+		with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+			zipf.write(lrc_path, lrc_path.name)
+			zipf.write(txt_path, txt_path.name)
+
+		if return_lrc_only and lrc_path.exists():
+			tlog("returning LRC only")
+			return FileResponse(path=str(lrc_path), filename=f"{Path(input_path).stem}.lrc", media_type="text/plain")
+		elapsed = time.time() - start_ts
+		mins = int(elapsed // 60); secs = int(elapsed % 60)
+		tlog(f"lyrics extraction done in {mins}m {secs}s ({elapsed:.1f}s)")
+		return FileResponse(path=str(zip_path), filename=f"{Path(input_path).stem}_lyrics.zip", media_type="application/zip")
+	except HTTPException:
+		shutil.rmtree(work, ignore_errors=True)
+		raise
+	except Exception as e:
+		shutil.rmtree(work, ignore_errors=True)
+		raise HTTPException(status_code=500, detail=str(e))
+
+
+# ----------------------
+# Lyrics alignment from provided text -> LRC
+# ----------------------
+
+@app.post("/api/audio/align-lyrics")
+async def align_lyrics(
+	file: UploadFile = File(...),  # audio file
+	lyrics_text: str = Form(...),  # plain text lyrics provided by user
+	language: str = Form("auto"),
+	model_size: str = Form("small"),
+):
+	"""Align user-provided lyrics to audio and produce an .lrc file. Terminal logs include step-by-step progress."""
+	work = Path(tempfile.mkdtemp(prefix="align_"))
+	input_path = work / (Path(file.filename).name or "input")
+	try:
+		start_ts = time.time()
+		def tlog(msg: str):
+			print(f"[align {datetime.datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+		tlog("saving upload…")
+		with input_path.open('wb') as f:
+			while True:
+				chunk = await file.read(1024 * 1024)
+				if not chunk:
+					break
+				f.write(chunk)
+
+		# pre-process: mono 16k for stable alignment
+		proc_path = work / "proc.wav"
+		cmd = [_FFMPEG_EXE, "-y", "-i", str(input_path), "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(proc_path)]
+		proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+		if proc.returncode != 0:
+			tlog("ffmpeg preprocessing failed")
+			raise HTTPException(status_code=500, detail="오디오 전처리 실패")
+		tlog("audio preprocessed to 16k mono")
+
+		# Transcribe with timestamps (word-level is optional; line-level sufficient)
+		import importlib
+		try:
+			fw = importlib.import_module("faster_whisper")
+			WhisperModel = getattr(fw, "WhisperModel")
+		except Exception:
+			raise HTTPException(status_code=500, detail="faster-whisper가 설치되지 않았습니다. pip install faster-whisper")
+		device = "cuda" if shutil.which("nvidia-smi") else "cpu"
+		compute_type = "int8" if device == "cpu" else "float16"
+		model = WhisperModel(model_size, device=device, compute_type=compute_type)
+		lang = None
+		if language.lower() in ("ko", "en"):
+			lang = language.lower()
+		tlog("transcribing audio for alignment…")
+		segments, _ = model.transcribe(
+			str(proc_path),
+			language=lang,
+			vad_filter=True,
+			word_timestamps=True,
+			chunk_length=30,
+		)
+
+		# Collect word-level anchors across the whole track
+		word_times = []  # list of (start, text)
+		seg_list = list(segments)
+		for seg in seg_list:
+			if getattr(seg, 'words', None):
+				for w in seg.words:
+					if w and (w.start is not None) and (w.word is not None):
+						word_times.append((float(w.start), str(w.word)))
+			else:
+				# fallback to segment start if word timing not available
+				word_times.append((float(seg.start or 0.0), seg.text or ""))
+
+		# Build alignment by distributing lines over anchors; avoid collapsing to the last timestamp
+		lines = [ln.strip() for ln in lyrics_text.splitlines() if ln.strip()]
+		pairs = []  # (time, text)
+		track_end = float(seg_list[-1].end or 0.0) if seg_list else 0.0
+		if not word_times:
+			# Fallback: map to segment starts, spread remaining lines to the end
+			anchors = [float(s.start or 0.0) for s in seg_list] if seg_list else [0.0]
+			if track_end <= 0.0 and seg_list:
+				track_end = float(seg_list[-1].end or anchors[-1])
+			for i, line in enumerate(lines):
+				if i < len(anchors):
+					pairs.append((anchors[i], line))
+				else:
+					remaining = len(lines) - i
+					start_time = anchors[-1] if anchors else 0.0
+					span = max(0.0, track_end - start_time)
+					gap = max(0.35, span / max(remaining, 1))
+					pairs.append((start_time + (i - (len(anchors) - 1)) * gap, line))
+		else:
+			# Use word anchors primarily; when exhausted, distribute evenly to track end
+			anchors = [t for (t, _w) in word_times]
+			for i, line in enumerate(lines):
+				if i < len(anchors):
+					pairs.append((anchors[i], line))
+				else:
+					remaining = len(lines) - i
+					start_time = anchors[-1]
+					span = max(0.0, track_end - start_time)
+					gap = max(0.35, span / max(remaining, 1))
+					pairs.append((start_time + (i - (len(anchors) - 1)) * gap, line))
+
+		lrc_path = work / "aligned_lyrics.lrc"
+		with lrc_path.open('w', encoding='utf-8') as f:
+			for t, text in pairs:
+				m = int(t // 60); s = int(t % 60); cs = int((t - int(t)) * 100)
+				f.write(f"[{m:02d}:{s:02d}.{cs:02d}]" + text + "\n")
+		tlog(f"lrc written: {lrc_path.name}")
+
+		elapsed = time.time() - start_ts
+		mins = int(elapsed // 60); secs = int(elapsed % 60)
+		tlog(f"alignment done in {mins}m {secs}s ({elapsed:.1f}s)")
+		return FileResponse(path=str(lrc_path), filename=f"{Path(input_path).stem}_aligned.lrc", media_type="text/plain")
+	except HTTPException:
+		shutil.rmtree(work, ignore_errors=True)
+		raise
+	except Exception as e:
+		shutil.rmtree(work, ignore_errors=True)
 		raise HTTPException(status_code=500, detail=str(e))
 if __name__ == "__main__":
 	import uvicorn

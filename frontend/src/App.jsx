@@ -50,6 +50,46 @@ function App() {
   const [separationProgress, setSeparationProgress] = useState(0)
   const [separationJobId, setSeparationJobId] = useState(null)
   const [isGeneratingScore, setIsGeneratingScore] = useState(false)
+  const [isExtractingLyrics, setIsExtractingLyrics] = useState(false)
+  const [lyricsLang, setLyricsLang] = useState('auto')
+  const [alignLyricsText, setAlignLyricsText] = useState('')
+  const [isAligningLyrics, setIsAligningLyrics] = useState(false)
+  const [alignLang, setAlignLang] = useState('auto')
+  const [alignModel, setAlignModel] = useState('small')
+  const [lastLrcText, setLastLrcText] = useState('')
+  const [parsedLrc, setParsedLrc] = useState([])
+
+  const parseLrc = useCallback((text) => {
+    if (!text || typeof text !== 'string') return []
+    const lines = text.split('\n')
+    const entries = []
+    const tsRe = /\[(\d{2}):(\d{2})(?:\.(\d{1,2}))?\]/g
+    for (const raw of lines) {
+      if (!raw) continue
+      let m
+      let lastIdx = 0
+      const stamps = []
+      while ((m = tsRe.exec(raw)) !== null) {
+        const mm = Number(m[1] || 0)
+        const ss = Number(m[2] || 0)
+        const cs = Number((m[3] || '0').padEnd(2, '0')) // hundredths
+        const t = mm * 60 + ss + cs / 100
+        stamps.push(t)
+        lastIdx = m.index + m[0].length
+      }
+      const content = raw.slice(lastIdx).trim()
+      if (stamps.length === 0) continue
+      for (const t of stamps) {
+        entries.push({ time: t, text: content })
+      }
+    }
+    entries.sort((a, b) => a.time - b.time)
+    return entries
+  }, [])
+
+  useEffect(() => {
+    setParsedLrc(parseLrc(lastLrcText))
+  }, [lastLrcText, parseLrc])
 
   // Real-time visualization settings
   const VIS_TYPES = [
@@ -1171,6 +1211,164 @@ function App() {
         </div>
       </div>
 
+      {/* Lyrics Extraction */}
+      <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+        <h2 className="section-title">Lyrics (Korean/English)</h2>
+        <div className="controls-row" style={{ gap: 8 }}>
+          <label>Language</label>
+          <select value={lyricsLang} onChange={(e) => setLyricsLang(e.target.value)}>
+            <option value="auto">Auto</option>
+            <option value="ko">Korean</option>
+            <option value="en">English</option>
+          </select>
+          <button
+            disabled={!selectedFile || isExtractingLyrics}
+            style={isExtractingLyrics ? { animation: 'pulse 1s infinite', background: '#365dfb' } : undefined}
+            onClick={async () => {
+              try {
+                setIsExtractingLyrics(true)
+                const form = new FormData()
+                form.append('file', selectedFile)
+                form.append('language', lyricsLang)
+                const resp = await fetch('http://localhost:8000/api/audio/extract-lyrics', { method: 'POST', body: form })
+                if (!resp.ok) throw new Error(await resp.text())
+                const blob = await resp.blob()
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + '_lyrics.zip'
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+                URL.revokeObjectURL(url)
+              } catch (e) {
+                alert('가사 추출 실패: ' + (e?.message || e))
+              } finally {
+                setIsExtractingLyrics(false)
+              }
+            }}
+          >
+            {isExtractingLyrics ? 'In progress...' : 'Extract Lyrics (.lrc + .txt)'}
+          </button>
+        </div>
+      </div>
+
+      {/* Lyrics Alignment (Upload text -> LRC) */}
+      <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+        <h2 className="section-title">Lyrics Alignment → LRC</h2>
+        <div style={{ width: '100%', maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <textarea
+            placeholder={'Paste lyrics here (one line per phrase)'}
+            value={alignLyricsText}
+            onChange={(e) => setAlignLyricsText(e.target.value)}
+            rows={6}
+            style={{ width: '100%', resize: 'vertical' }}
+          />
+          <div className="controls-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <label>Language</label>
+            <select value={alignLang} onChange={(e) => setAlignLang(e.target.value)}>
+              <option value="auto">Auto</option>
+              <option value="ko">Korean</option>
+              <option value="en">English</option>
+            </select>
+            <label>Model</label>
+            <select value={alignModel} onChange={(e) => setAlignModel(e.target.value)}>
+              <option value="tiny">tiny</option>
+              <option value="base">base</option>
+              <option value="small">small</option>
+              <option value="medium">medium</option>
+              <option value="large-v3">large-v3</option>
+            </select>
+            <button
+              disabled={!selectedFile || isAligningLyrics}
+              style={isAligningLyrics ? { animation: 'pulse 1s infinite', background: '#365dfb' } : undefined}
+              onClick={async () => {
+                try {
+                  setIsAligningLyrics(true)
+                  const form = new FormData()
+                  form.append('file', selectedFile)
+                  form.append('language', alignLang)
+                  form.append('model_size', alignModel)
+                  if (alignLyricsText.trim().length > 0) {
+                    // sanitize: remove [ ... ] blocks and empty lines
+                    const cleaned = alignLyricsText
+                      .split('\n')
+                      .map(l => l.replace(/\[[^\]]*\]/g, '').trim())
+                      .filter(l => l.length > 0)
+                      .join('\n')
+                    form.append('lyrics_text', cleaned)
+                    const resp = await fetch('http://localhost:8000/api/audio/align-lyrics', { method: 'POST', body: form })
+                    if (!resp.ok) throw new Error(await resp.text())
+                    const contentType = resp.headers.get('content-type') || ''
+                    if (contentType.includes('text/plain')) {
+                      const text = await resp.text()
+                      setLastLrcText(text)
+                      // also offer download
+                      const blob = new Blob([text], { type: 'text/plain' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + '_aligned.lrc'
+                      document.body.appendChild(a)
+                      a.click()
+                      a.remove()
+                      URL.revokeObjectURL(url)
+                    } else {
+                      // fallback: treat as blob
+                      const blob = await resp.blob()
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + '_aligned.lrc'
+                      document.body.appendChild(a)
+                      a.click()
+                      a.remove()
+                      URL.revokeObjectURL(url)
+                    }
+                  } else {
+                    // No lyrics provided -> auto transcription then return .lrc
+                    form.append('return_lrc_only', 'true')
+                    const resp = await fetch('http://localhost:8000/api/audio/extract-lyrics', { method: 'POST', body: form })
+                    if (!resp.ok) throw new Error(await resp.text())
+                    const contentType = resp.headers.get('content-type') || ''
+                    if (contentType.includes('text/plain')) {
+                      const text = await resp.text()
+                      setLastLrcText(text)
+                      const blob = new Blob([text], { type: 'text/plain' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + '.lrc'
+                      document.body.appendChild(a)
+                      a.click()
+                      a.remove()
+                      URL.revokeObjectURL(url)
+                    } else {
+                      // fallback: blob (e.g., if server returned zip unexpectedly)
+                      const blob = await resp.blob()
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + '.lrc'
+                      document.body.appendChild(a)
+                      a.click()
+                      a.remove()
+                      URL.revokeObjectURL(url)
+                    }
+                  }
+                } catch (e) {
+                  alert('LRC 생성 실패: ' + (e?.message || e))
+                } finally {
+                  setIsAligningLyrics(false)
+                }
+              }}
+            >
+              {isAligningLyrics ? 'In progress...' : 'Align & Download LRC'}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <label>Visuals:</label>
@@ -1402,6 +1600,28 @@ function App() {
           >
             {isFullscreen ? '⤓' : '⤢'}
           </button>
+        </div>
+      )}
+
+      {parsedLrc.length > 0 && (
+        <div className="section-card unified-width" style={{ textAlign: 'center', paddingTop: 8, paddingBottom: 12 }}>
+          {(() => {
+            let idx = -1
+            for (let i = 0; i < parsedLrc.length; i++) {
+              if (parsedLrc[i].time <= (audioRef.current?.currentTime || 0)) idx = i
+              else break
+            }
+            const prev = idx > 0 ? parsedLrc[idx - 1].text : ''
+            const curr = idx >= 0 ? parsedLrc[idx].text : ''
+            const next = idx + 1 < parsedLrc.length ? parsedLrc[idx + 1].text : ''
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+                {prev ? <div style={{ opacity: 0.5, fontSize: 14 }}>{prev}</div> : null}
+                <div style={{ fontSize: 18, fontWeight: 700 }}>{curr}</div>
+                {next ? <div style={{ opacity: 0.6, fontSize: 14 }}>{next}</div> : null}
+              </div>
+            )
+          })()}
         </div>
       )}
 

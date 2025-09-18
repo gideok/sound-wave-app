@@ -3,6 +3,11 @@
   50% { filter: brightness(1.6); }
   100% { filter: brightness(1); }
 }
+
+/* Ensure form controls inherit the global font */
+textarea, input, select, button {
+  font-family: inherit;
+}
 #root {
   max-width: 1200px;
   margin: 0 auto;
