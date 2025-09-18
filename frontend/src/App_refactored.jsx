@@ -8,7 +8,6 @@ import LufsAnalyzer from './components/LufsAnalyzer'
 import StemSeparation from './components/StemSeparation'
 import VocalScoreGenerator from './components/VocalScoreGenerator'
 import LyricsExtractor from './components/LyricsExtractor'
-import LyricsAlignment from './components/LyricsAlignment'
 import VisualizationSettings from './components/VisualizationSettings'
 import CanvasVisualization from './components/CanvasVisualization'
 import AudioControls from './components/AudioControls'
@@ -22,9 +21,6 @@ import { useVisualization } from './hooks/useVisualization'
 import { useRenderSettings } from './hooks/useRenderSettings'
 import { useCanvasRendering } from './hooks/useCanvasRendering'
 import { useVisualizationDrawers } from './hooks/useVisualizationDrawers'
-import { useStemSeparation } from './hooks/useStemSeparation'
-import { useLyricsProcessing } from './hooks/useLyricsProcessing'
-import { useRecording } from './hooks/useRecording'
 
 // Constants
 import { DEFAULT_LAYOUT_MODE } from './constants/visualization'
@@ -45,6 +41,30 @@ function App() {
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // Stem separation state
+  const [stemModels, setStemModels] = useState([])
+  const [selectedStemModel, setSelectedStemModel] = useState('demucs:4stems')
+  const [isSeparating, setIsSeparating] = useState(false)
+  const [separationProgress, setSeparationProgress] = useState(0)
+  const [separationJobId, setSeparationJobId] = useState(null)
+
+  // Lyrics state
+  const [isGeneratingScore, setIsGeneratingScore] = useState(false)
+  const [isExtractingLyrics, setIsExtractingLyrics] = useState(false)
+  const [lyricsLang, setLyricsLang] = useState('auto')
+  const [alignLyricsText, setAlignLyricsText] = useState('')
+  const [isAligningLyrics, setIsAligningLyrics] = useState(false)
+  const [alignLang, setAlignLang] = useState('auto')
+  const [alignModel, setAlignModel] = useState('small')
+  const [lastLrcText, setLastLrcText] = useState('')
+  const [parsedLrc, setParsedLrc] = useState([])
+
+  // Recording state
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordUrl, setRecordUrl] = useState('')
+  const mediaRecorderRef = useRef(null)
+  const recordedChunksRef = useRef([])
+
   // Custom hooks
   const audioPlayer = useAudioPlayer()
   const lufsAnalysis = useLufsAnalysis()
@@ -56,13 +76,42 @@ function App() {
     canvasRendering.clearCanvas,
     canvasRendering.spectrumStateRef
   )
-  const stemSeparation = useStemSeparation()
-  const lyricsProcessing = useLyricsProcessing()
-  const recording = useRecording()
+
+  // Parse LRC text
+  const parseLrc = useCallback((text) => {
+    console.log('parseLrc called with text length:', text?.length || 0)
+    if (!text || typeof text !== 'string') return []
+    const lines = text.split('\n')
+    console.log('Split into', lines.length, 'lines')
+    const entries = []
+    const tsRe = /\[(\d{2}):(\d{2})(?:\.(\d{1,2}))?\]/g
+    for (const raw of lines) {
+      if (!raw) continue
+      let m
+      let lastIdx = 0
+      const stamps = []
+      while ((m = tsRe.exec(raw)) !== null) {
+        const mm = Number(m[1] || 0)
+        const ss = Number(m[2] || 0)
+        const cs = Number((m[3] || '0').padEnd(2, '0')) // hundredths
+        const t = mm * 60 + ss + cs / 100
+        stamps.push(t)
+        lastIdx = m.index + m[0].length
+      }
+      const content = raw.slice(lastIdx).trim()
+      if (stamps.length === 0) continue
+      for (const t of stamps) {
+        entries.push({ time: t, text: content })
+      }
+    }
+    entries.sort((a, b) => a.time - b.time)
+    console.log('Parsed', entries.length, 'LRC entries')
+    return entries
+  }, [])
 
   useEffect(() => {
-    lyricsProcessing.setParsedLrc(lyricsProcessing.parseLrc(lyricsProcessing.lastLrcText))
-  }, [lyricsProcessing.lastLrcText])
+    setParsedLrc(parseLrc(lastLrcText))
+  }, [lastLrcText, parseLrc])
 
   // Real-time render loop
   const renderRealtime = useCallback(() => {
@@ -279,48 +328,33 @@ function App() {
 
       <StemSeparation
         selectedFile={audioPlayer.selectedFile}
-        stemModels={stemSeparation.stemModels}
-        selectedStemModel={stemSeparation.selectedStemModel}
-        isSeparating={stemSeparation.isSeparating}
-        separationProgress={stemSeparation.separationProgress}
-        separationJobId={stemSeparation.separationJobId}
-        setSelectedStemModel={stemSeparation.setSelectedStemModel}
-        separateStems={stemSeparation.separateStems}
+        stemModels={stemModels}
+        selectedStemModel={selectedStemModel}
+        isSeparating={isSeparating}
+        separationProgress={separationProgress}
+        separationJobId={separationJobId}
+        setSelectedStemModel={setSelectedStemModel}
+        separateStems={() => {/* TODO: Implement */}}
         isCollapsed={colStems}
         onToggleCollapse={() => setColStems(v => !v)}
       />
 
       <VocalScoreGenerator
         selectedFile={audioPlayer.selectedFile}
-        isGeneratingScore={lyricsProcessing.isGeneratingScore}
-        generateScore={lyricsProcessing.generateScore}
+        isGeneratingScore={isGeneratingScore}
+        generateScore={() => {/* TODO: Implement */}}
         isCollapsed={colScore}
         onToggleCollapse={() => setColScore(v => !v)}
       />
 
       <LyricsExtractor
         selectedFile={audioPlayer.selectedFile}
-        lyricsLang={lyricsProcessing.lyricsLang}
-        isExtractingLyrics={lyricsProcessing.isExtractingLyrics}
-        setLyricsLang={lyricsProcessing.setLyricsLang}
-        extractLyrics={lyricsProcessing.extractLyrics}
+        lyricsLang={lyricsLang}
+        isExtractingLyrics={isExtractingLyrics}
+        setLyricsLang={setLyricsLang}
+        extractLyrics={() => {/* TODO: Implement */}}
         isCollapsed={colLyrics}
         onToggleCollapse={() => setColLyrics(v => !v)}
-      />
-
-      <LyricsAlignment
-        selectedFile={audioPlayer.selectedFile}
-        alignLyricsText={lyricsProcessing.alignLyricsText}
-        setAlignLyricsText={lyricsProcessing.setAlignLyricsText}
-        isAligningLyrics={lyricsProcessing.isAligningLyrics}
-        alignLang={lyricsProcessing.alignLang}
-        setAlignLang={lyricsProcessing.setAlignLang}
-        alignModel={lyricsProcessing.alignModel}
-        setAlignModel={lyricsProcessing.setAlignModel}
-        alignLyrics={lyricsProcessing.alignLyrics}
-        setLastLrcText={lyricsProcessing.setLastLrcText}
-        isCollapsed={colAlign}
-        onToggleCollapse={() => setColAlign(v => !v)}
       />
 
       <VisualizationSettings
@@ -345,12 +379,10 @@ function App() {
         onSeek={audioPlayer.onSeek}
         isFullscreen={isFullscreen}
         toggleFullscreen={toggleFullscreen}
-        canvasRef={canvasRendering.canvasRef}
-        splitCanvasRefs={canvasRendering.splitCanvasRefs}
       />
 
       <LyricsDisplay
-        parsedLrc={lyricsProcessing.parsedLrc}
+        parsedLrc={parsedLrc}
         audioRef={audioPlayer.audioRef}
         isCollapsed={colLyricLine}
         onToggleCollapse={() => setColLyricLine(true)}
@@ -364,10 +396,10 @@ function App() {
         duration={audioPlayer.duration}
         formatTime={audioPlayer.formatTime}
         onTogglePlay={audioPlayer.onTogglePlay}
-        isRecording={recording.isRecording}
-        startRecording={() => recording.startRecording(audioPlayer.audioRef, visualization.layoutMode, canvasRendering.canvasRef)}
-        stopRecording={recording.stopRecording}
-        recordUrl={recording.recordUrl}
+        isRecording={isRecording}
+        startRecording={() => {/* TODO: Implement */}}
+        stopRecording={() => {/* TODO: Implement */}}
+        recordUrl={recordUrl}
         isCollapsed={colControls}
       />
 
