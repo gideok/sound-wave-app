@@ -187,6 +187,17 @@ def _probe_duration_seconds(input_path: Path) -> Optional[float]:
 	return None
 
 
+def _job_log(job_id: str, message: str) -> None:
+	"""Append a log line to a job and also print to terminal."""
+	line = f"[stem:{job_id}] {message}"
+	print(line, flush=True)
+	with _JOB_LOCK:
+		job = _JOBS.get(job_id)
+		if job is not None:
+			logs = job.setdefault("logs", [])
+			logs.append(line)
+
+
 def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
 	try:
 		start = text.find("{")
@@ -594,12 +605,15 @@ def render_result(bg: BackgroundTasks, job_id: str = Query(...)):
 def _run_stem_separation(job_id: str, input_path: Path, output_dir: Path, model: str):
 	"""Background task for stem separation using Demucs"""
 	try:
+		_job_log(job_id, f"Job queued. Input: {input_path.name}")
 		with _JOB_LOCK:
 			job = _JOBS.get(job_id)
 			if not job:
 				return
 			job["status"] = "running"
 			job["progress"] = 0.1
+			job["eta"] = None
+		_job_log(job_id, "Preparing Demucs...")
 
 		with _JOB_LOCK:
 			job = _JOBS.get(job_id)
@@ -609,6 +623,7 @@ def _run_stem_separation(job_id: str, input_path: Path, output_dir: Path, model:
 		# Demucs로 stem 분리 실행
 		# Demucs는 직접 파일을 처리하고 결과를 지정된 디렉터리에 저장합니다
 		from demucs import separate
+		_job_log(job_id, "Demucs module imported.")
 		
 		with _JOB_LOCK:
 			job = _JOBS.get(job_id)
@@ -621,44 +636,97 @@ def _run_stem_separation(job_id: str, input_path: Path, output_dir: Path, model:
 			demucs_model = "htdemucs"
 		elif "5stems" in model:
 			demucs_model = "htdemucs_ft"
+		_job_log(job_id, f"Selected model: {demucs_model}")
 		
-		# Demucs로 분리 실행
-		separate.main([
-			"--model", demucs_model,
-			"--device", "cpu",
-			"--out", str(output_dir),
-			str(input_path)
-		])
+		# Demucs로 분리 실행 (stderr를 읽어 진행률 유추)
+		cmd = [
+			"python", "-m", "demucs.separate",
+			"-n", demucs_model,  # model name flag
+			"-d", "cpu",
+			"-o", str(output_dir),
+			str(input_path),
+		]
+		_job_log(job_id, "Starting Demucs separation...")
+		proc = subprocess.Popen(
+			cmd,
+			stdout=subprocess.PIPE,
+			stderr=subprocess.PIPE,
+			text=True,
+			encoding="utf-8",
+			errors="ignore",
+		)
+		if not proc.stderr:
+			raise RuntimeError("Demucs stderr stream not available")
+		stage = "prepare"
+		while True:
+			line = proc.stderr.readline()
+			if not line and proc.poll() is not None:
+				break
+			if not line:
+				continue
+			lower = line.lower()
+			# Heuristic stage mapping
+			if "loading" in lower and stage == "prepare":
+				stage = "load"
+				with _JOB_LOCK:
+					job = _JOBS.get(job_id)
+					if job:
+						job["progress"] = max(job.get("progress", 0.0), 0.2)
+				_job_log(job_id, line.strip())
+			elif "separating" in lower or "running" in lower:
+				stage = "separate"
+				with _JOB_LOCK:
+					job = _JOBS.get(job_id)
+					if job:
+						job["progress"] = max(job.get("progress", 0.0), 0.4)
+				_job_log(job_id, line.strip())
+			elif "done" in lower or "saving" in lower:
+				stage = "save"
+				with _JOB_LOCK:
+					job = _JOBS.get(job_id)
+					if job:
+						job["progress"] = max(job.get("progress", 0.0), 0.75)
+				_job_log(job_id, line.strip())
+
+			# Generic pass-through logging every few lines
+			if any(key in lower for key in ["demucs", "torch", "chunks", "batch", "resample", "writing", "file"]):
+				_job_log(job_id, line.strip())
+
+		proc.wait()
+		if proc.returncode != 0:
+			raise RuntimeError("Demucs process failed. See logs above.")
 		
 		with _JOB_LOCK:
 			job = _JOBS.get(job_id)
 			if job:
-				job["progress"] = 0.8
+				job["progress"] = max(job.get("progress", 0.0), 0.85)
+		_job_log(job_id, "Collecting separated stems...")
 		
-		# Demucs는 모델명 폴더 안에 결과를 저장하므로 찾아서 이동
-		model_folder = output_dir / demucs_model
-		if model_folder.exists():
-			stem_files = {}
-			for stem_file in model_folder.glob("*.wav"):
-				stem_name = stem_file.stem
-				new_path = output_dir / f"{stem_name}.wav"
-				stem_file.rename(new_path)
-				stem_files[stem_name] = str(new_path)
-			
-			# 모델 폴더 삭제
-			import shutil
-			shutil.rmtree(model_folder, ignore_errors=True)
-		else:
-			# 폴더가 없으면 직접 찾기
-			stem_files = {}
-			for stem_file in output_dir.glob("*.wav"):
-				stem_name = stem_file.stem
-				stem_files[stem_name] = str(stem_file)
+		# Demucs는 보통 output_dir / model / <track_name> / *.wav 구조로 저장합니다.
+		# 재귀적으로 탐색하여 최상위로 이동
+		stem_files = {}
+		for stem_file in output_dir.rglob("*.wav"):
+			# 무작위 중첩 구조에서도 stem 파일만 수집
+			name = stem_file.stem
+			# e.g., 'vocals', 'drums', etc.만 허용
+			if name.lower() in {"vocals", "drums", "bass", "other", "piano"}:
+				new_path = output_dir / f"{name}.wav"
+				try:
+					if stem_file.resolve() != new_path.resolve():
+						shutil.copy2(stem_file, new_path)
+					stem_files[name] = str(new_path)
+				except Exception:
+					pass
+
+		# 불필요한 서브폴더 정리 (모델/트랙 폴더 등)
+		for sub in output_dir.iterdir():
+			if sub.is_dir():
+				shutil.rmtree(sub, ignore_errors=True)
 
 		with _JOB_LOCK:
 			job = _JOBS.get(job_id)
 			if job:
-				job["progress"] = 0.9
+				job["progress"] = max(job.get("progress", 0.0), 0.92)
 
 		# ZIP 파일로 압축
 		zip_path = output_dir.parent / "stems.zip"
@@ -666,6 +734,7 @@ def _run_stem_separation(job_id: str, input_path: Path, output_dir: Path, model:
 		with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
 			for stem_name, stem_path in stem_files.items():
 				zipf.write(stem_path, f"{stem_name}.wav")
+		_job_log(job_id, f"Created ZIP: {zip_path.name}")
 
 		with _JOB_LOCK:
 			job = _JOBS.get(job_id)
@@ -673,6 +742,7 @@ def _run_stem_separation(job_id: str, input_path: Path, output_dir: Path, model:
 				job["status"] = "completed"
 				job["progress"] = 1.0
 				job["zip_path"] = str(zip_path)
+		_job_log(job_id, "Job completed successfully.")
 
 	except Exception as e:
 		with _JOB_LOCK:
@@ -680,6 +750,7 @@ def _run_stem_separation(job_id: str, input_path: Path, output_dir: Path, model:
 			if job:
 				job["status"] = "failed"
 				job["error"] = str(e)
+		_job_log(job_id, f"Job failed: {e}")
 
 
 @app.post("/api/audio/separate-stems")
@@ -756,6 +827,8 @@ def stem_separation_progress(job_id: str = Query(...)):
 			"status": job.get("status"),
 			"progress": job.get("progress"),
 			"error": job.get("error"),
+			"logs": job.get("logs", [])[-100:],  # 최근 100라인만
+			"eta": job.get("eta"),
 		}
 
 
