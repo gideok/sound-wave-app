@@ -73,8 +73,10 @@ function App() {
   const [colPlayer] = useState(false)
 
   const parseLrc = useCallback((text) => {
+    console.log('parseLrc called with text length:', text?.length || 0)
     if (!text || typeof text !== 'string') return []
     const lines = text.split('\n')
+    console.log('Split into', lines.length, 'lines')
     const entries = []
     const tsRe = /\[(\d{2}):(\d{2})(?:\.(\d{1,2}))?\]/g
     for (const raw of lines) {
@@ -97,6 +99,7 @@ function App() {
       }
     }
     entries.sort((a, b) => a.time - b.time)
+    console.log('Parsed', entries.length, 'LRC entries')
     return entries
   }, [])
 
@@ -261,7 +264,7 @@ function App() {
     }
     rafId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(rafId)
-  }, [layoutMode, selectedVis, bgColor, waveColor, visSettings])
+  }, [renderRealtime])
 
   const ensureCanvasSize = (canvas, height = 200) => {
     const dpr = window.devicePixelRatio || 1
@@ -324,7 +327,7 @@ function App() {
     }
   }
 
-  const renderRealtime = () => {
+  const renderRealtime = useCallback(() => {
     const analyser = analyserNodeRef.current
     const timeData = timeDataRef.current
     const freqData = freqDataRef.current
@@ -361,14 +364,14 @@ function App() {
         }
       })
     }
-  }
+  }, [layoutMode, selectedVis, visSettings, drawOverlay, drawLine, drawBars, drawSpectrum, drawCircularSpectrum, drawMirroredBars, drawRmsCurve, drawWave3D])
 
   const clearCanvas = (ctx, width, height, bg = '#0b1020') => {
     ctx.fillStyle = bg
     ctx.fillRect(0, 0, width, height)
   }
 
-  const drawOverlay = (canvas, timeData, freqData) => {
+  const drawOverlay = useCallback((canvas, timeData, freqData) => {
     if (!canvas) return
     const { ctx, width, height } = ensureCanvasSize(canvas, 300)
     clearCanvas(ctx, width, height, bgColor)
@@ -406,9 +409,9 @@ function App() {
       ctx.fillStyle = '#ffcc00'
       ctx.fillRect(0, height - bottomPad + 2, x, bottomPad - 4)
     }
-  }
+  }, [bgColor, selectedVis, visSettings, duration, drawLine, drawBars, drawSpectrum, drawCircularSpectrum, drawMirroredBars, drawRmsCurve, drawWave3D])
 
-  const drawLine = (canvas, timeData, settings) => {
+  const drawLine = useCallback((canvas, timeData, settings) => {
     const { color, thickness = 2, sensitivity = 1.0 } = settings
     const { ctx, width, height } = ensureCanvasSize(canvas, 300)
     const mid = height / 2
@@ -423,9 +426,9 @@ function App() {
       else ctx.lineTo(x, y)
     }
     ctx.stroke()
-  }
+  }, [])
 
-  const drawBars = (canvas, timeData, settings) => {
+  const drawBars = useCallback((canvas, timeData, settings) => {
     const { color, columns = 200, sensitivity = 1.0 } = settings
     const { ctx, width, height } = ensureCanvasSize(canvas, 300)
     const mid = height / 2
@@ -437,9 +440,9 @@ function App() {
       const h = v * (mid - 6)
       ctx.fillRect(x, mid - h, barWidth - 1, h * 2)
     }
-  }
+  }, [])
 
-  const drawMirroredBars = (canvas, timeData, settings) => {
+  const drawMirroredBars = useCallback((canvas, timeData, settings) => {
     const { color, columns = 220, sensitivity = 1.0 } = settings
     const { ctx, width, height } = ensureCanvasSize(canvas, 300)
     const mid = height / 2
@@ -452,9 +455,9 @@ function App() {
       ctx.fillRect(x, mid - h, barWidth - 1, h)
       ctx.fillRect(x, mid, barWidth - 1, h)
     }
-  }
+  }, [])
 
-  const drawSpectrum = (canvas, freqData, settings) => {
+  const drawSpectrum = useCallback((canvas, freqData, settings) => {
     const { color, columns = 128, sensitivity = 1.0 } = settings
     const { ctx, width, height } = ensureCanvasSize(canvas, 300)
     const barWidth = Math.max(2, Math.floor(width / columns))
@@ -517,9 +520,9 @@ function App() {
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(x, py, barWidth - 1, 2)
     }
-  }
+  }, [])
 
-  const drawCircularSpectrum = (canvas, freqData, settings) => {
+  const drawCircularSpectrum = useCallback((canvas, freqData, settings) => {
     const { color, thickness = 2, sensitivity = 1.0, radiusScale = 0.6, segments = 128 } = settings
     const { ctx, width, height } = ensureCanvasSize(canvas, 300)
     const cx = Math.floor(width / 2)
@@ -544,9 +547,9 @@ function App() {
       ctx.stroke()
     }
     ctx.restore()
-  }
+  }, [])
 
-  const drawRmsCurve = (canvas, timeData, settings) => {
+  const drawRmsCurve = useCallback((canvas, timeData, settings) => {
     const { color, thickness = 2, window = 32 } = settings
     const { ctx, width, height } = ensureCanvasSize(canvas, 300)
     const mid = height / 2
@@ -568,9 +571,9 @@ function App() {
       else ctx.lineTo(x, y)
     }
     ctx.stroke()
-  }
+  }, [])
 
-  const drawWave3D = (canvas, timeData, settings) => {
+  const drawWave3D = useCallback((canvas, timeData, settings) => {
     const { color, shadow = '#0a1025', highlight = '#9ad8ff', layers = 12, depth = 8, tilt = 0.4, sensitivity = 1.0 } = settings
     const { ctx, width, height } = ensureCanvasSize(canvas, 300)
     const mid = Math.floor(height / 2)
@@ -625,7 +628,7 @@ function App() {
       }
       ctx.stroke()
     }
-  }
+  }, [])
 
   const onTogglePlay = useCallback(async () => {
     console.log('onTogglePlay called')
@@ -1316,19 +1319,56 @@ function App() {
         {!colAlign && (
         <div style={{ width: '100%', maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div className="controls-row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <input ref={lrcFileInputRef} type="file" accept=".lrc,text/lrc,text/plain" onChange={async (e) => {
+            <input ref={lrcFileInputRef} type="file" accept=".lrc,.txt,.zip,text/lrc,text/plain,application/zip" onChange={async (e) => {
+              console.log('LRC file input changed:', e.target.files)
               const file = e.target.files && e.target.files[0]
-              if (!file) return
+              if (!file) {
+                console.log('No file selected')
+                return
+              }
+              console.log('Selected file:', file.name, file.type, file.size)
               try {
                 const text = await file.text()
-                setLastLrcText(text)
+                console.log('File content length:', text.length)
+                console.log('First 100 chars:', text.substring(0, 100))
+                
+                // Check if file is actually a ZIP file (starts with PK)
+                if (text.startsWith('PK')) {
+                  console.log('File appears to be ZIP format, trying to extract LRC...')
+                  try {
+                    const JSZip = (await import('jszip')).default
+                    const zip = await JSZip.loadAsync(await file.arrayBuffer())
+                    console.log('ZIP contents:', Object.keys(zip.files))
+                    
+                    // Look for .lrc file in ZIP
+                    const lrcFile = Object.keys(zip.files).find(name => name.toLowerCase().endsWith('.lrc'))
+                    if (lrcFile) {
+                      console.log('Found LRC file in ZIP:', lrcFile)
+                      const lrcText = await zip.files[lrcFile].async('text')
+                      console.log('Extracted LRC content length:', lrcText.length)
+                      setLastLrcText(lrcText)
+                      console.log('LRC text set successfully from ZIP')
+                    } else {
+                      console.log('No LRC file found in ZIP')
+                      alert('ZIP 파일에서 LRC 파일을 찾을 수 없습니다.')
+                    }
+                  } catch (zipErr) {
+                    console.error('Error processing ZIP file:', zipErr)
+                    alert('ZIP 파일 처리 중 오류가 발생했습니다: ' + (zipErr?.message || zipErr))
+                  }
+                } else {
+                  // Regular text file
+                  setLastLrcText(text)
+                  console.log('LRC text set successfully')
+                }
               } catch (err) {
+                console.error('Error reading LRC file:', err)
                 alert('LRC 파일을 읽는 중 오류가 발생했습니다: ' + (err?.message || err))
               } finally {
                 if (lrcFileInputRef.current) lrcFileInputRef.current.value = ''
               }
             }} />
-            <span style={{ fontSize: 12, color: '#8a8a8a' }}>이미 생성된 .lrc를 업로드하면 하단에 즉시 표시됩니다.</span>
+            <span style={{ fontSize: 12, color: '#8a8a8a' }}>이미 생성된 .lrc 파일이나 ZIP 파일을 업로드하면 하단에 즉시 표시됩니다.</span>
           </div>
           <textarea
             placeholder={'Paste lyrics here (one line per phrase)'}
