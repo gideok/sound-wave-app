@@ -60,3 +60,5 @@ temp/
 
 # ImageIO / ffmpeg caches (if any)
 ~$*
+fullscreen_front.html
+sound-wave-app.zip
