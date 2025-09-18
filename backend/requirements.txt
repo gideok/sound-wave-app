@@ -1,0 +1,10 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+imageio-ffmpeg==0.4.9
+demucs==4.0.1
+torch>=1.8.1
+torchaudio>=0.8
+librosa>=0.8.0
+numpy>=1.16.0
+pandas>=1.1.0

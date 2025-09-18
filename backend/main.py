@@ -26,6 +26,17 @@ except Exception:
 	_FFMPEG_EXE = shutil.which("ffmpeg") or "ffmpeg"
 	_FFPROBE_EXE = shutil.which("ffprobe") or "ffprobe"
 
+# Stem separation imports
+try:
+	from demucs import separate
+	import torch
+	import torchaudio
+	_DEMUCS_AVAILABLE = True
+	print("Demucs is available")
+except ImportError as e:
+	_DEMUCS_AVAILABLE = False
+	print(f"Demucs not available: {e}")
+
 app = FastAPI()
 
 # CORS 설정: 프론트엔드 개발 서버(http://localhost:5173)에서의 요청을 허용
@@ -574,4 +585,248 @@ def render_result(bg: BackgroundTasks, job_id: str = Query(...)):
 
 	bg.add_task(_cleanup)
 	return FileResponse(path=str(output_path), filename=f"waveform_{Path(input_path).stem or 'output'}.mp4", media_type="video/mp4")
-    
+
+
+# ----------------------
+# Stem Separation API
+# ----------------------
+
+def _run_stem_separation(job_id: str, input_path: Path, output_dir: Path, model: str):
+	"""Background task for stem separation using Demucs"""
+	try:
+		with _JOB_LOCK:
+			job = _JOBS.get(job_id)
+			if not job:
+				return
+			job["status"] = "running"
+			job["progress"] = 0.1
+
+		with _JOB_LOCK:
+			job = _JOBS.get(job_id)
+			if job:
+				job["progress"] = 0.3
+		
+		# Demucs로 stem 분리 실행
+		# Demucs는 직접 파일을 처리하고 결과를 지정된 디렉터리에 저장합니다
+		from demucs import separate
+		
+		with _JOB_LOCK:
+			job = _JOBS.get(job_id)
+			if job:
+				job["progress"] = 0.5
+		
+		# Demucs 모델 매핑
+		demucs_model = "htdemucs"  # 기본 모델
+		if "4stems" in model:
+			demucs_model = "htdemucs"
+		elif "5stems" in model:
+			demucs_model = "htdemucs_ft"
+		
+		# Demucs로 분리 실행
+		separate.main([
+			"--model", demucs_model,
+			"--device", "cpu",
+			"--out", str(output_dir),
+			str(input_path)
+		])
+		
+		with _JOB_LOCK:
+			job = _JOBS.get(job_id)
+			if job:
+				job["progress"] = 0.8
+		
+		# Demucs는 모델명 폴더 안에 결과를 저장하므로 찾아서 이동
+		model_folder = output_dir / demucs_model
+		if model_folder.exists():
+			stem_files = {}
+			for stem_file in model_folder.glob("*.wav"):
+				stem_name = stem_file.stem
+				new_path = output_dir / f"{stem_name}.wav"
+				stem_file.rename(new_path)
+				stem_files[stem_name] = str(new_path)
+			
+			# 모델 폴더 삭제
+			import shutil
+			shutil.rmtree(model_folder, ignore_errors=True)
+		else:
+			# 폴더가 없으면 직접 찾기
+			stem_files = {}
+			for stem_file in output_dir.glob("*.wav"):
+				stem_name = stem_file.stem
+				stem_files[stem_name] = str(stem_file)
+
+		with _JOB_LOCK:
+			job = _JOBS.get(job_id)
+			if job:
+				job["progress"] = 0.9
+
+		# ZIP 파일로 압축
+		zip_path = output_dir.parent / "stems.zip"
+		import zipfile
+		with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+			for stem_name, stem_path in stem_files.items():
+				zipf.write(stem_path, f"{stem_name}.wav")
+
+		with _JOB_LOCK:
+			job = _JOBS.get(job_id)
+			if job:
+				job["status"] = "completed"
+				job["progress"] = 1.0
+				job["zip_path"] = str(zip_path)
+
+	except Exception as e:
+		with _JOB_LOCK:
+			job = _JOBS.get(job_id)
+			if job:
+				job["status"] = "failed"
+				job["error"] = str(e)
+
+
+@app.post("/api/audio/separate-stems")
+async def separate_stems(
+	file: UploadFile = File(...),
+	model: str = "demucs:4stems",  # Default to 4 stems separation
+):
+	"""
+	업로드된 오디오 파일에서 stem을 분리하여 각각의 WAV 파일로 저장합니다.
+	사용 가능한 모델:
+	- demucs:4stems (vocals, drums, bass, other)
+	- demucs:5stems (vocals, drums, bass, piano, other)
+	"""
+	if not _DEMUCS_AVAILABLE:
+		raise HTTPException(
+			status_code=500, 
+			detail="Demucs가 설치되지 않았습니다. pip install demucs를 실행하세요."
+		)
+
+	if not _FFMPEG_EXE or (Path(_FFMPEG_EXE).exists() is False and shutil.which(_FFMPEG_EXE) is None):
+		raise HTTPException(status_code=500, detail="ffmpeg 실행 파일을 찾을 수 없습니다.")
+
+	# 임시 디렉터리 준비
+	tmp_dir = Path(tempfile.mkdtemp(prefix="stem_separation_"))
+	input_path = tmp_dir / (Path(file.filename).name or "input")
+	output_dir = tmp_dir / "stems"
+
+	try:
+		# 업로드된 파일 저장
+		with input_path.open("wb") as f:
+			while True:
+				chunk = await file.read(1024 * 1024)
+				if not chunk:
+					break
+				f.write(chunk)
+
+		# 출력 디렉터리 생성
+		output_dir.mkdir(exist_ok=True)
+
+		job_id = str(uuid.uuid4())
+		with _JOB_LOCK:
+			_JOBS[job_id] = {
+				"status": "queued",
+				"progress": 0.0,
+				"tmp_dir": str(tmp_dir),
+				"input_path": str(input_path),
+				"output_dir": str(output_dir),
+				"model": model,
+				"error": None,
+			}
+
+		thread = threading.Thread(
+			target=_run_stem_separation,
+			args=(job_id, input_path, output_dir, model),
+			daemon=True,
+		)
+		thread.start()
+
+		return {"job_id": job_id}
+
+	except Exception as e:
+		shutil.rmtree(tmp_dir, ignore_errors=True)
+		raise HTTPException(status_code=500, detail=f"Stem 분리 시작 실패: {str(e)}")
+
+
+@app.get("/api/audio/stem-separation/progress")
+def stem_separation_progress(job_id: str = Query(...)):
+	"""Stem 분리 진행률 조회"""
+	with _JOB_LOCK:
+		job = _JOBS.get(job_id)
+		if not job:
+			return JSONResponse({"error": "job not found"}, status_code=404)
+		return {
+			"status": job.get("status"),
+			"progress": job.get("progress"),
+			"error": job.get("error"),
+		}
+
+
+@app.get("/api/audio/stem-separation/result")
+def stem_separation_result(bg: BackgroundTasks, job_id: str = Query(...)):
+	"""Stem 분리 결과 다운로드"""
+	with _JOB_LOCK:
+		job = _JOBS.get(job_id)
+		if not job:
+			raise HTTPException(status_code=404, detail="job not found")
+		status = job.get("status")
+		zip_path = Path(job.get("zip_path"))
+		tmp_dir = Path(job.get("tmp_dir"))
+		input_path = Path(job.get("input_path"))
+		model = job.get("model")
+		
+		if status != "completed" or not zip_path.exists():
+			raise HTTPException(status_code=400, detail="job not completed")
+
+	def _cleanup():
+		try:
+			with _JOB_LOCK:
+				_JOBS.pop(job_id, None)
+			if zip_path.exists():
+				zip_path.unlink()
+			if input_path.exists():
+				input_path.unlink()
+			if tmp_dir.exists():
+				shutil.rmtree(tmp_dir, ignore_errors=True)
+		except Exception:
+			pass
+
+	bg.add_task(_cleanup)
+	
+	# 모델 정보에 따른 파일명 생성
+	model_name = model.replace("spleeter:", "").replace("-16kHz", "")
+	filename = f"stems_{Path(input_path).stem or 'output'}_{model_name}.zip"
+	
+	return FileResponse(path=str(zip_path), filename=filename, media_type="application/zip")
+
+
+@app.get("/api/audio/stem-models")
+def get_stem_models():
+	"""
+	사용 가능한 stem 분리 모델 목록을 반환합니다.
+	"""
+	models = [
+		{
+			"id": "demucs:4stems",
+			"name": "4 Stems (Vocals + Drums + Bass + Other)",
+			"description": "보컬, 드럼, 베이스, 기타 음원을 분리합니다.",
+			"stems": ["vocals", "drums", "bass", "other"]
+		},
+		{
+			"id": "demucs:5stems",
+			"name": "5 Stems (Vocals + Drums + Bass + Piano + Other)", 
+			"description": "보컬, 드럼, 베이스, 피아노, 기타 음원을 분리합니다.",
+			"stems": ["vocals", "drums", "bass", "piano", "other"]
+		}
+	]
+	
+	if not _DEMUCS_AVAILABLE:
+		return {
+			"available": False, 
+			"models": models, 
+			"message": "Demucs가 설치되지 않았습니다. pip install demucs를 실행하세요."
+		}
+	
+	return {"available": True, "models": models}
+
+
+if __name__ == "__main__":
+	import uvicorn
+	uvicorn.run(app, host="0.0.0.0", port=8000)

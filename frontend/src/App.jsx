@@ -43,6 +43,13 @@ function App() {
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // Stem separation state
+  const [stemModels, setStemModels] = useState([])
+  const [selectedStemModel, setSelectedStemModel] = useState('demucs:4stems')
+  const [isSeparating, setIsSeparating] = useState(false)
+  const [separationProgress, setSeparationProgress] = useState(0)
+  const [separationJobId, setSeparationJobId] = useState(null)
+
   // Real-time visualization settings
   const VIS_TYPES = [
     { id: 'line', label: 'Waveform (Line)' },
@@ -603,7 +610,7 @@ function App() {
         width: String(widthPx), height: String(heightPx), fps: String(fps),
         color: toHex0x(waveColor), background: toHex0x(bgColor),
       })
-      const resp = await fetch('/api/render/start?' + qs.toString(), { method: 'POST', body: form })
+      const resp = await fetch('http://localhost:8000/api/render/start?' + qs.toString(), { method: 'POST', body: form })
       if (!resp.ok) throw new Error(await resp.text())
       const data = await resp.json()
       setJobStatus('running')
@@ -621,7 +628,7 @@ function App() {
       setLufsData(null)
       const form = new FormData()
       form.append('file', selectedFile)
-      const resp = await fetch('/api/audio/measure-lufs', { method: 'POST', body: form })
+      const resp = await fetch('http://localhost:8000/api/audio/measure-lufs', { method: 'POST', body: form })
       if (!resp.ok) throw new Error(await resp.text())
       const data = await resp.json()
       setLufsData(data)
@@ -648,7 +655,7 @@ function App() {
         compress_attack_ms: String(compAttack),
         compress_release_ms: String(compRelease),
       })
-      const resp = await fetch('/api/audio/normalize?' + qs.toString(), { method: 'POST', body: form })
+      const resp = await fetch('http://localhost:8000/api/audio/normalize?' + qs.toString(), { method: 'POST', body: form })
       if (!resp.ok) throw new Error(await resp.text())
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
@@ -665,6 +672,90 @@ function App() {
     } finally {
       setIsNormalizing(false)
     }
+  }
+
+  // Load available stem models
+  const loadStemModels = async () => {
+    try {
+      const resp = await fetch('http://localhost:8000/api/audio/stem-models')
+      if (!resp.ok) throw new Error(await resp.text())
+      const data = await resp.json()
+      setStemModels(data.models || [])
+      
+      // Show warning if Demucs is not available
+      if (!data.available && data.message) {
+        console.warn(data.message)
+      }
+    } catch (e) {
+      console.error('Failed to load stem models:', e)
+    }
+  }
+
+  // Separate stems
+  const separateStems = async () => {
+    if (!selectedFile) return
+    try {
+      setIsSeparating(true)
+      setSeparationProgress(0)
+      setSeparationJobId(null)
+      
+      const form = new FormData()
+      form.append('file', selectedFile)
+      const qs = new URLSearchParams({
+        model: selectedStemModel
+      })
+      
+      const resp = await fetch('http://localhost:8000/api/audio/separate-stems?' + qs.toString(), { 
+        method: 'POST', 
+        body: form 
+      })
+      
+      if (!resp.ok) throw new Error(await resp.text())
+      
+      const data = await resp.json()
+      setSeparationJobId(data.job_id)
+      pollSeparationProgress(data.job_id)
+    } catch (e) {
+      alert('Stem 분리 시작 실패: ' + (e?.message || e))
+      setIsSeparating(false)
+    }
+  }
+
+  // Poll separation progress
+  const pollSeparationProgress = async (jobId) => {
+    let done = false
+    while (!done) {
+      await new Promise(r => setTimeout(r, 1000))
+      try {
+        const resp = await fetch('http://localhost:8000/api/audio/stem-separation/progress?job_id=' + encodeURIComponent(jobId))
+        if (!resp.ok) throw new Error(await resp.text())
+        const data = await resp.json()
+        setSeparationProgress(Number(data.progress || 0) * 100)
+        
+        if (data.status === 'completed') {
+          done = true
+          const res = await fetch('http://localhost:8000/api/audio/stem-separation/result?job_id=' + encodeURIComponent(jobId))
+          if (!res.ok) throw new Error(await res.text())
+          const blob = await res.blob()
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + '_stems.zip'
+          document.body.appendChild(a)
+          a.click()
+          a.remove()
+          URL.revokeObjectURL(url)
+        } else if (data.status === 'failed' || data.status === 'cancelled') {
+          done = true
+          alert('Stem 분리 실패: ' + (data.error || 'unknown error'))
+        }
+      } catch (e) {
+        done = true
+        alert('Stem 분리 진행률 조회 실패: ' + (e?.message || e))
+      }
+    }
+    setIsSeparating(false)
+    setSeparationJobId(null)
   }
 
   const extractNumber = (obj, a, b) => {
@@ -714,14 +805,14 @@ function App() {
     while (!done) {
       await new Promise(r => setTimeout(r, 800))
       try {
-        const resp = await fetch('/api/render/progress?job_id=' + encodeURIComponent(id))
+        const resp = await fetch('http://localhost:8000/api/render/progress?job_id=' + encodeURIComponent(id))
         if (!resp.ok) throw new Error(await resp.text())
         const data = await resp.json()
         setJobProgress(Number(data.progress || 0))
         setJobStatus(String(data.status))
         if (data.status === 'completed') {
           done = true
-          const res = await fetch('/api/render/result?job_id=' + encodeURIComponent(id))
+          const res = await fetch('http://localhost:8000/api/render/result?job_id=' + encodeURIComponent(id))
           if (!res.ok) throw new Error(await res.text())
           const blob = await res.blob()
           const url = URL.createObjectURL(blob)
@@ -818,6 +909,11 @@ function App() {
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
       document.removeEventListener('msfullscreenchange', handleFullscreenChange)
     }
+  }, [])
+
+  // Load stem models on component mount
+  useEffect(() => {
+    loadStemModels()
   }, [])
 
   // Keyboard shortcuts
@@ -929,6 +1025,59 @@ function App() {
         </div>
         {normalizedUrl && (
           <audio src={normalizedUrl} controls style={{ width: '100%' }} />
+        )}
+      </div>
+
+      {/* Stem Separation */}
+      <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+        <h2 className="section-title">Stem Separation</h2>
+        {stemModels.length === 0 ? (
+          <div style={{ color: '#ff6b6b', textAlign: 'center', padding: '20px' }}>
+            Stem 모델을 로드하는 중...
+          </div>
+        ) : (
+          <>
+            <div className="controls-row">
+              <label>Model:</label>
+              <select 
+                value={selectedStemModel} 
+                onChange={(e) => setSelectedStemModel(e.target.value)}
+                disabled={isSeparating}
+              >
+                {stemModels.map(model => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+              <button 
+                disabled={!selectedFile || isSeparating} 
+                onClick={separateStems}
+              >
+                {isSeparating ? 'Separating...' : 'Separate Stems'}
+              </button>
+            </div>
+          </>
+        )}
+        {stemModels.length > 0 && (
+          <div style={{ fontSize: '12px', color: '#99a2d1', textAlign: 'center', maxWidth: '600px' }}>
+            {stemModels.find(m => m.id === selectedStemModel)?.description}
+          </div>
+        )}
+        {isSeparating && (
+          <div style={{ width: 400, margin: '0 auto' }}>
+            <div style={{ height: 8, background: '#222b4a', borderRadius: 4 }}>
+              <div style={{ height: 8, width: `${Math.round(separationProgress)}%`, background: '#5ac8fa', borderRadius: 4 }} />
+            </div>
+            <div style={{ textAlign: 'center', marginTop: 6 }}>
+              {separationProgress > 0 ? `${Math.round(separationProgress)}%` : 'Starting separation...'}
+            </div>
+            {separationJobId && (
+              <div style={{ fontSize: '10px', color: '#666', textAlign: 'center', marginTop: 4 }}>
+                Job ID: {separationJobId}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
