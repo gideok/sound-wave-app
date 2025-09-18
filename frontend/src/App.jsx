@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import './App.css'
 
 function App() {
@@ -492,7 +492,7 @@ function App() {
     }
   }
 
-  const onTogglePlay = async () => {
+  const onTogglePlay = useCallback(async () => {
     console.log('onTogglePlay called')
     console.log('audioRef.current:', audioRef.current)
     console.log('audioUrl:', audioUrl)
@@ -533,7 +533,7 @@ function App() {
       audio.pause()
       setIsPlaying(false)
     }
-  }
+  }, [audioUrl, selectedFile])
 
   const onSeek = (e) => {
     if (!audioRef.current || !duration) return
@@ -819,6 +819,28 @@ function App() {
       document.removeEventListener('msfullscreenchange', handleFullscreenChange)
     }
   }, [])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // Prevent default behavior for Space key to avoid page scrolling
+      if (event.code === 'Space') {
+        event.preventDefault()
+        
+        // Only trigger play/pause if we have audio loaded
+        if (audioUrl && audioRef.current) {
+          onTogglePlay()
+        }
+      }
+    }
+
+    // Add event listener to document to work in fullscreen mode
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [audioUrl, onTogglePlay]) // Include dependencies to ensure latest state
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} className="unified-width">
