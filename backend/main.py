@@ -1047,49 +1047,218 @@ async def generate_score(
 		# Try to render PDF from MusicXML using MuseScore or Verovio/CairoSVG if MusicXML exists
 		pdf_path = tmp_dir / "vocal_melody.pdf"
 		if musicxml_path and Path(musicxml_path).exists():
+			tlog("attempting PDF generation from MusicXML...")
+			
+			# Try MuseScore first
 			musescore_candidates = [
 				shutil.which("MuseScore4.exe"),
-				shutil.which("MuseScore3.exe"),
+				shutil.which("MuseScore3.exe"), 
 				shutil.which("MuseScore.exe"),
-				shutil.which("musescore4.exe"),
-				shutil.which("musescore3.exe"),
-				shutil.which("musescore.exe"),
-				shutil.which("mscore.exe"),
+				shutil.which("musescore4"),
+				shutil.which("musescore3"),
+				shutil.which("musescore"),
+				shutil.which("mscore"),
+			# Additional Windows paths
+			r"C:\Program Files\MuseScore 4\bin\MuseScore4.exe",
+			r"C:\Program Files\MuseScore 3\bin\MuseScore3.exe",
+			r"C:\Program Files (x86)\MuseScore 4\bin\MuseScore4.exe",
+			r"C:\Program Files (x86)\MuseScore 3\bin\MuseScore3.exe",
+			# Portable MuseScore locations
+			str(Path.cwd() / "MuseScore4" / "MuseScore4.exe"),
+			str(Path.cwd() / "MuseScore3" / "MuseScore3.exe"),
 			]
-			musescore_exe = next((p for p in musescore_candidates if p), None)
-			if musescore_exe and Path(musescore_exe).exists():
+			
+			musescore_exe = None
+			for candidate in musescore_candidates:
+				if candidate and Path(candidate).exists():
+					musescore_exe = candidate
+					break
+			
+			if musescore_exe:
 				try:
+					tlog(f"trying MuseScore at: {musescore_exe}")
 					# MuseScore CLI: musescore -o out.pdf in.musicxml
 					cmd_pdf = [musescore_exe, "-o", str(pdf_path), str(musicxml_path)]
-					proc_pdf = subprocess.run(cmd_pdf, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore")
+					# Run MuseScore in headless/offscreen mode where possible to avoid GUI issues
+					env = os.environ.copy()
+					env.setdefault("QT_QPA_PLATFORM", "offscreen")
+					proc_pdf = subprocess.run(
+						cmd_pdf, 
+						stdout=subprocess.PIPE, 
+						stderr=subprocess.PIPE, 
+						text=True, 
+						encoding="utf-8", 
+						errors="ignore",
+						timeout=60,  # 60 second timeout
+						cwd=str(tmp_dir),
+						env=env,
+					)
 					if proc_pdf.returncode == 0 and pdf_path.exists():
 						tlog(f"PDF rendered with MuseScore: {pdf_path.name}")
 					else:
-						tlog("MuseScore PDF render failed, continuing without PDF.")
-				except Exception as _:
-					tlog("MuseScore not usable for PDF rendering; skipping.")
+						tlog(f"MuseScore failed (code {proc_pdf.returncode}): {proc_pdf.stderr}")
+						tlog("trying fallback methods...")
+				except subprocess.TimeoutExpired:
+					tlog("MuseScore timed out, trying fallback...")
+				except Exception as e:
+					tlog(f"MuseScore error: {e}, trying fallback...")
 			else:
-				# Fallback: Verovio (MusicXML->SVG) + CairoSVG (SVG->PDF)
+				tlog("MuseScore not found, trying fallback methods...")
+			
+			# Fallback: Verovio (MusicXML->SVG) + CairoSVG (SVG->PDF)
+			if not pdf_path.exists():
 				try:
+					tlog("trying Verovio + CairoSVG...")
 					from verovio import toolkit as vr_toolkit  # type: ignore
 					import cairosvg  # type: ignore
+					
 					# Configure Verovio (A4-ish page, auto height, reasonable scale)
 					tk = vr_toolkit.Toolkit()
 					tk.setOptions({
 						"pageHeight": 2970,   # ~ A4 at 10 units/mm
 						"pageWidth": 2100,
 						"adjustPageHeight": True,
-						"scale": 50
+						"scale": 50,
+						"header": "none",
+						"footer": "none"
 					})
+					
 					ok = tk.loadFile(str(musicxml_path))
 					if not ok:
 						raise RuntimeError("Verovio failed to load MusicXML")
+					
 					svg = tk.renderToSVG(1)
-					# For multi-page, one could loop pages = krn.getPageCount(); here single page for brevity
-					cairosvg.svg2pdf(bytestring=svg.encode('utf-8'), write_to=str(pdf_path))
-					tlog(f"PDF rendered with Verovio/CairoSVG: {pdf_path.name}")
-				except Exception as _:
-					tlog("No MuseScore; Verovio/CairoSVG fallback failed or not installed. PDF skipped.")
+					if not svg:
+						raise RuntimeError("Verovio failed to render SVG")
+					
+					# Convert SVG(s) to a multi-page PDF when needed
+					try:
+						page_count = getattr(tk, 'getPageCount', lambda: 1)()
+					except Exception:
+						page_count = 1
+
+					if page_count <= 1:
+						# Single page direct convert
+						cairosvg.svg2pdf(bytestring=svg.encode('utf-8'), write_to=str(pdf_path))
+					else:
+						# Multi-page: render each SVG page to PNG then compose a PDF with reportlab
+						from io import BytesIO
+						from reportlab.pdfgen import canvas as rl_canvas  # type: ignore
+						from reportlab.lib.pagesizes import A4  # type: ignore
+						from reportlab.lib.utils import ImageReader  # type: ignore
+						pdf_buf = BytesIO()
+						c = rl_canvas.Canvas(str(pdf_path), pagesize=A4)
+						page_w, page_h = A4
+						margin = 36  # 0.5 inch margins
+						max_w = page_w - margin * 2
+						max_h = page_h - margin * 2
+						for p in range(1, page_count + 1):
+							svg_p = tk.renderToSVG(p)
+							png_bytes = cairosvg.svg2png(bytestring=svg_p.encode('utf-8'))
+							img = ImageReader(BytesIO(png_bytes))
+							# Get image size
+							img_w, img_h = img.getSize()
+							# Fit to page respecting aspect
+							scale = min(max_w / img_w, max_h / img_h)
+							draw_w = img_w * scale
+							draw_h = img_h * scale
+							x = (page_w - draw_w) / 2
+							y = (page_h - draw_h) / 2
+							c.drawImage(img, x, y, width=draw_w, height=draw_h)
+							if p < page_count:
+								c.showPage()
+						c.save()
+
+					if pdf_path.exists():
+						tlog(f"PDF rendered with Verovio/CairoSVG: {pdf_path.name} (pages={page_count})")
+					else:
+						raise RuntimeError("PDF file not created")
+						
+				except ImportError as e:
+					tlog(f"Verovio/CairoSVG not available: {e}")
+					tlog("install with: pip install verovio cairosvg")
+				except Exception as e:
+					tlog(f"Verovio/CairoSVG failed: {e}")
+			
+			# Final fallback: Simple HTML-based PDF using weasyprint or reportlab
+			if not pdf_path.exists():
+				try:
+					tlog("trying simple HTML-to-PDF conversion...")
+					
+					# Create a simple HTML representation of the MIDI data
+					html_content = f"""
+					<!DOCTYPE html>
+					<html>
+					<head>
+						<title>Vocal Score</title>
+						<style>
+							body {{ font-family: Arial, sans-serif; margin: 20px; }}
+							.note {{ display: inline-block; margin: 2px; padding: 4px; border: 1px solid #ccc; }}
+							.measure {{ margin: 10px 0; }}
+						</style>
+					</head>
+					<body>
+						<h1>Vocal Score</h1>
+						<p>Generated from: {Path(input_path).name}</p>
+						<p>MIDI file: {midi_path.name}</p>
+						{f'<p>MusicXML file: {Path(musicxml_path).name}</p>' if musicxml_path else ''}
+						<p>This is a simplified representation. Please use the MIDI or MusicXML files with music notation software for full score display.</p>
+						
+						<div class="notes">
+							<p><strong>Note:</strong> Install MuseScore for better PDF generation:</p>
+							<ul>
+								<li>Download from <a href="https://musescore.org">https://musescore.org</a></li>
+								<li>Or install Verovio/CairoSVG: <code>pip install verovio cairosvg</code></li>
+							</ul>
+						</div>
+					</body>
+					</html>
+					"""
+					
+					# Try weasyprint first
+					try:
+						import weasyprint  # type: ignore
+						weasyprint.HTML(string=html_content).write_pdf(str(pdf_path))
+						if pdf_path.exists():
+							tlog(f"PDF created with weasyprint: {pdf_path.name}")
+					except ImportError:
+						# Fallback to wkhtmltopdf if available
+						try:
+							import pdfkit  # type: ignore
+							pdfkit.from_string(html_content, str(pdf_path))
+							if pdf_path.exists():
+								tlog(f"PDF created with wkhtmltopdf: {pdf_path.name}")
+						except ImportError:
+							# Last resort: create a text-based PDF with reportlab
+							try:
+								from reportlab.pdfgen import canvas  # type: ignore
+								from reportlab.lib.pagesizes import letter  # type: ignore
+								
+								c = canvas.Canvas(str(pdf_path), pagesize=letter)
+								width, height = letter
+								
+								c.drawString(50, height - 50, f"Vocal Score - {Path(input_path).name}")
+								c.drawString(50, height - 80, f"Generated MIDI: {midi_path.name}")
+								if musicxml_path:
+									c.drawString(50, height - 110, f"Generated MusicXML: {Path(musicxml_path).name}")
+								
+								c.drawString(50, height - 150, "This is a placeholder PDF.")
+								c.drawString(50, height - 180, "Please use the MIDI or MusicXML files with music notation software.")
+								c.drawString(50, height - 210, "For better PDF generation, install MuseScore from https://musescore.org")
+								
+								c.save()
+								if pdf_path.exists():
+									tlog(f"Basic PDF created with reportlab: {pdf_path.name}")
+							except ImportError:
+								tlog("No PDF generation libraries available. Install: pip install reportlab weasyprint")
+								
+				except Exception as e:
+					tlog(f"Simple PDF generation failed: {e}")
+		
+		if not pdf_path.exists():
+			tlog("PDF generation failed with all methods. ZIP will contain MIDI and MusicXML only.")
+		else:
+			tlog(f"PDF successfully generated: {pdf_path.stat().st_size} bytes")
 
 		# Zip
 		zip_path = tmp_dir / "vocal_score.zip"

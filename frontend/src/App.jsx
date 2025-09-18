@@ -59,6 +59,7 @@ function App() {
   const [alignModel, setAlignModel] = useState('small')
   const [lastLrcText, setLastLrcText] = useState('')
   const [parsedLrc, setParsedLrc] = useState([])
+  const lrcFileInputRef = useRef(null)
   // Collapsible flags per section
   const [colLufs, setColLufs] = useState(false)
   const [colStems, setColStems] = useState(false)
@@ -1314,6 +1315,21 @@ function App() {
         <button style={{ position: 'absolute', top: 8, right: 8 }} onClick={() => setColAlign(v => !v)} title={colAlign ? 'Expand' : 'Collapse'}>{colAlign ? '▢' : '▣'}</button>
         {!colAlign && (
         <div style={{ width: '100%', maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className="controls-row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input ref={lrcFileInputRef} type="file" accept=".lrc,text/lrc,text/plain" onChange={async (e) => {
+              const file = e.target.files && e.target.files[0]
+              if (!file) return
+              try {
+                const text = await file.text()
+                setLastLrcText(text)
+              } catch (err) {
+                alert('LRC 파일을 읽는 중 오류가 발생했습니다: ' + (err?.message || err))
+              } finally {
+                if (lrcFileInputRef.current) lrcFileInputRef.current.value = ''
+              }
+            }} />
+            <span style={{ fontSize: 12, color: '#8a8a8a' }}>이미 생성된 .lrc를 업로드하면 하단에 즉시 표시됩니다.</span>
+          </div>
           <textarea
             placeholder={'Paste lyrics here (one line per phrase)'}
             value={alignLyricsText}
