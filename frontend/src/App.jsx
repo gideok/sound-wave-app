@@ -283,6 +283,7 @@ function App() {
     const canvas = canvasRef.current
     if (!canvas) return
     const { ctx, width, height } = ensureCanvasSize(canvas, 200)
+    const bottomPad = 10
 
     ctx.fillStyle = '#0b1020'
     ctx.fillRect(0, 0, width, height)
@@ -297,7 +298,7 @@ function App() {
     if (!waveform || waveform.length === 0) return
 
     const barWidth = Math.max(1, Math.floor(width / waveform.length))
-    const halfH = height / 2
+    const halfH = (height - bottomPad) / 2
     ctx.fillStyle = '#5ac8fa'
 
     for (let i = 0; i < waveform.length; i++) {
@@ -310,8 +311,15 @@ function App() {
     if (duration > 0 && audioRef.current) {
       const progress = Math.min(1, audioRef.current.currentTime / duration)
       const x = Math.floor(progress * width)
+      // clear and draw progress bar only in bottom padding strip
+      ctx.fillStyle = '#0b1020'
+      ctx.fillRect(0, height - bottomPad, width, bottomPad)
+      // baseline for strip
+      ctx.fillStyle = '#222b4a'
+      ctx.fillRect(0, height - bottomPad - 1, width, 1)
+      // progress bar (filled from start)
       ctx.fillStyle = '#ffcc00'
-      ctx.fillRect(x, 0, 2, height)
+      ctx.fillRect(0, height - bottomPad + 2, x, bottomPad - 4)
     }
   }
 
@@ -363,6 +371,7 @@ function App() {
     if (!canvas) return
     const { ctx, width, height } = ensureCanvasSize(canvas, 300)
     clearCanvas(ctx, width, height, bgColor)
+    const bottomPad = 10
 
     ctx.strokeStyle = '#222b4a'
     ctx.lineWidth = 1
@@ -371,6 +380,11 @@ function App() {
     ctx.lineTo(width, Math.floor(height / 2))
     ctx.stroke()
 
+    // clip drawing area to exclude bottomPad so visuals don't overlap the strip
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(0, 0, width, height - bottomPad)
+    ctx.clip()
     if (selectedVis.includes('line')) drawLine(canvas, timeData, visSettings.line)
     if (selectedVis.includes('bars')) drawBars(canvas, timeData, visSettings.bars)
     if (selectedVis.includes('spectrum')) drawSpectrum(canvas, freqData, visSettings.spectrum)
@@ -378,12 +392,18 @@ function App() {
     if (selectedVis.includes('mirrored')) drawMirroredBars(canvas, timeData, visSettings.mirrored)
     if (selectedVis.includes('rms')) drawRmsCurve(canvas, timeData, visSettings.rms)
     if (selectedVis.includes('wave3d')) drawWave3D(canvas, timeData, visSettings.wave3d)
+    ctx.restore()
 
     if (duration > 0 && audioRef.current) {
       const progress = Math.min(1, audioRef.current.currentTime / duration)
       const x = Math.floor(progress * width)
+      // clear and draw progress bar in the bottom strip only
+      ctx.fillStyle = '#0b1020'
+      ctx.fillRect(0, height - bottomPad, width, bottomPad)
+      ctx.fillStyle = '#222b4a'
+      ctx.fillRect(0, height - bottomPad - 1, width, 1)
       ctx.fillStyle = '#ffcc00'
-      ctx.fillRect(x, 0, 2, height)
+      ctx.fillRect(0, height - bottomPad + 2, x, bottomPad - 4)
     }
   }
 
