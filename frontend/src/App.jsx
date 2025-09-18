@@ -1135,6 +1135,37 @@ function App() {
         )}
       </div>
 
+      {/* Vocal Score Generator */}
+      <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+        <h2 className="section-title">Vocal Score</h2>
+        <div className="controls-row">
+          <button
+            disabled={!selectedFile}
+            onClick={async () => {
+              try {
+                const form = new FormData()
+                form.append('file', selectedFile)
+                const resp = await fetch('http://localhost:8000/api/audio/generate-score', { method: 'POST', body: form })
+                if (!resp.ok) throw new Error(await resp.text())
+                const blob = await resp.blob()
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + '_vocal_score.zip'
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+                URL.revokeObjectURL(url)
+              } catch (e) {
+                alert('악보 생성 실패: ' + (e?.message || e))
+              }
+            }}
+          >
+            Generate Vocal Score (MIDI + MusicXML)
+          </button>
+        </div>
+      </div>
+
       <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <label>Visuals:</label>

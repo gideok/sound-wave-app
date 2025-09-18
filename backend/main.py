@@ -15,6 +15,7 @@ import uuid
 import re
 from typing import Dict, Any, Optional
 import json
+import math
 
 try:
 	# Prefer bundled ffmpeg from imageio-ffmpeg if available
@@ -900,6 +901,145 @@ def get_stem_models():
 	return {"available": True, "models": models}
 
 
+# ----------------------
+# Vocal-based score generation API
+# ----------------------
+
+def _hz_to_midi(hz: float) -> Optional[int]:
+	try:
+		if hz <= 0 or not math.isfinite(hz):
+			return None
+		return int(round(69 + 12 * math.log2(hz / 440.0)))
+	except Exception:
+		return None
+
+
+@app.post("/api/audio/generate-score")
+async def generate_score(
+	file: UploadFile = File(...),
+	model: str = "demucs:4stems",
+	min_note_ms: int = 120,
+	voicing_thresh: float = 0.6,
+):
+	"""
+	보컬 기준 악보 생성: Demucs로 보컬 추출 → f0 추정(librosa.pyin) → MIDI + MusicXML 생성하여 ZIP 반환
+	"""
+	if not _DEMUCS_AVAILABLE:
+		raise HTTPException(status_code=500, detail="Demucs가 설치되지 않았습니다.")
+
+	# temp workspace
+	tmp_dir = Path(tempfile.mkdtemp(prefix="score_"))
+	input_path = tmp_dir / (Path(file.filename).name or "input")
+	stems_dir = tmp_dir / "stems"
+	stems_dir.mkdir(exist_ok=True)
+
+	try:
+		# save upload
+		with input_path.open("wb") as f:
+			while True:
+				chunk = await file.read(1024 * 1024)
+				if not chunk:
+					break
+				f.write(chunk)
+
+		# run demucs to extract vocals only (faster: specify two-stem? demucs doesn't support 2-stem default, so extract all and take vocals)
+		from demucs import separate as demucs_separate
+		demucs_model = "htdemucs" if "4stems" in model else "htdemucs_ft"
+		cmd = [
+			"python", "-m", "demucs.separate",
+			"-n", demucs_model,
+			"-d", "cpu",
+			"-o", str(stems_dir),
+			str(input_path),
+		]
+		proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore")
+		if proc.returncode != 0:
+			raise HTTPException(status_code=500, detail="Demucs 실행 실패")
+
+		# find vocals wav
+		vocals_path = None
+		for p in stems_dir.rglob("*.wav"):
+			if p.stem.lower() == "vocals":
+				vocals_path = p
+				break
+		if not vocals_path:
+			raise HTTPException(status_code=500, detail="보컬 파일을 찾지 못했습니다.")
+
+		# f0 estimation with librosa.pyin
+		import librosa
+		import numpy as np
+		y, sr = librosa.load(str(vocals_path), sr=22050, mono=True)
+		frame_length = 2048
+		hop_length = 256
+		f0, voiced_flag, _ = librosa.pyin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'), sr=sr, frame_length=frame_length, hop_length=hop_length)
+		times = librosa.times_like(f0, sr=sr, hop_length=hop_length)
+
+		# Build note events from f0 sequence
+		min_frames = max(1, int((min_note_ms / 1000.0) * sr / hop_length))
+		events = []  # (start_time, end_time, midi_note)
+		cur_note = None
+		cur_start = 0.0
+		last_idx = 0
+		for idx, (hz, voiced) in enumerate(zip(f0, voiced_flag)):
+			midi = _hz_to_midi(hz if voiced else 0.0)
+			if cur_note is None:
+				cur_note = midi
+				cur_start = float(times[idx])
+				last_idx = idx
+				continue
+			# change detection
+			if midi != cur_note:
+				length_frames = idx - last_idx
+				if cur_note is not None and length_frames >= min_frames:
+					events.append((cur_start, float(times[idx]), int(cur_note)))
+				cur_note = midi
+				cur_start = float(times[idx])
+				last_idx = idx
+		# flush
+		if cur_note is not None and (len(times) - 1 - last_idx) >= min_frames:
+			events.append((cur_start, float(times[-1]), int(cur_note)))
+
+		# Create MIDI using mido
+		from mido import Message, MidiFile, MidiTrack, bpm2tempo
+		midi = MidiFile()
+		track = MidiTrack(); midi.tracks.append(track)
+		tempo = bpm2tempo(120)
+		track.append(Message('program_change', program=0, time=0))
+		# time mapping
+		ticks_per_beat = midi.ticks_per_beat
+		seconds_to_ticks = lambda s: int(round((s * 1_000_000) / tempo * ticks_per_beat))
+		current_tick = 0
+		for start, end, n in events:
+			start_ticks = seconds_to_ticks(start)
+			delta = max(0, start_ticks - current_tick)
+			track.append(Message('note_on', note=int(n), velocity=80, time=delta))
+			dur_ticks = max(1, seconds_to_ticks(max(0.01, end - start)))
+			track.append(Message('note_off', note=int(n), velocity=64, time=dur_ticks))
+			current_tick = start_ticks + dur_ticks
+		midi_path = tmp_dir / "vocal_melody.mid"
+		midi.save(str(midi_path))
+
+		# Convert MIDI to MusicXML via music21
+		from music21 import converter
+		s = converter.parse(str(midi_path))
+		musicxml_path = tmp_dir / "vocal_melody.musicxml"
+		s.write('musicxml', fp=str(musicxml_path))
+
+		# Zip
+		zip_path = tmp_dir / "vocal_score.zip"
+		import zipfile
+		with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+			zipf.write(midi_path, midi_path.name)
+			zipf.write(musicxml_path, musicxml_path.name)
+
+		return FileResponse(path=str(zip_path), filename=f"{Path(input_path).stem}_vocal_score.zip", media_type="application/zip")
+
+	except HTTPException:
+		shutil.rmtree(tmp_dir, ignore_errors=True)
+		raise
+	except Exception as e:
+		shutil.rmtree(tmp_dir, ignore_errors=True)
+		raise HTTPException(status_code=500, detail=str(e))
 if __name__ == "__main__":
 	import uvicorn
 	uvicorn.run(app, host="0.0.0.0", port=8000, lifespan="off")
