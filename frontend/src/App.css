@@ -33,10 +33,29 @@
 
 .visuals-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px 16px;
-  justify-items: start;
+  justify-items: stretch;
   color: #e2e8f0;
+  width: 100%;
+}
+
+.visuals-grid label {
+  width: 100%;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(31, 41, 55, 0.3);
+  border: 1px solid rgba(55, 65, 81, 0.5);
+  transition: background-color 0.2s ease;
+  box-sizing: border-box;
+}
+
+.visuals-grid label:hover {
+  background: rgba(31, 41, 55, 0.5);
 }
 
 .layout-row {
@@ -50,7 +69,9 @@
 
 .unified-width {
   max-width: 1100px;
+  width: 100%;
   margin: 0 auto;
+  box-sizing: border-box;
 }
 
 /* Soft UI for inputs/buttons */
@@ -198,4 +219,86 @@ span {
 
 .read-the-docs {
   color: #888;
+}
+
+/* Responsive design for uniform sections */
+@media (max-width: 1200px) {
+  .unified-width {
+    max-width: 95%;
+    padding: 0 16px;
+  }
+  
+  .visuals-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .unified-width {
+    max-width: 100%;
+    padding: 0 12px;
+  }
+  
+  .visuals-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .controls-row {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 600px) {
+  .unified-width {
+    padding: 0 8px;
+  }
+  
+  .visuals-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .section-card {
+    padding: 12px;
+  }
+  
+  .controls-row {
+    gap: 6px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .controls-row > * {
+    margin: 2px 0;
+  }
+}
+
+@media (max-width: 480px) {
+  #root {
+    padding: 16px 8px;
+  }
+  
+  .unified-width {
+    padding: 0 4px;
+  }
+  
+  .section-card {
+    padding: 8px;
+  }
+  
+  .settings-table {
+    border-spacing: 8px 6px;
+  }
+  
+  .settings-table .visual-name-cell {
+    width: 60px;
+  }
+  
+  .settings-table .label-cell {
+    width: 50px;
+  }
+  
+  .settings-table .input-cell {
+    width: 70px;
+  }
 }
