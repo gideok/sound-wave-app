@@ -123,6 +123,100 @@ input[type="number"] {
   background: #111827;
 }
 
+/* Fullscreen button */
+.fullscreen-button {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border: 1px solid #4b5563;
+  background: rgba(31, 41, 55, 0.8);
+  color: #9ca3af;
+  font-size: 18px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  z-index: 10;
+  backdrop-filter: blur(4px);
+}
+
+.fullscreen-button:hover {
+  background: rgba(31, 41, 55, 0.95);
+  color: #e2e8f0;
+  border-color: #6b7280;
+  transform: scale(1.05);
+}
+
+.fullscreen-button:active {
+  transform: scale(0.95);
+}
+
+/* Fullscreen mode styles */
+#canvas-container:fullscreen {
+  background: #0b1020;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#canvas-container:fullscreen canvas {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+}
+
+#canvas-container:-webkit-full-screen {
+  background: #0b1020;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#canvas-container:-webkit-full-screen canvas {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+}
+
+#canvas-container:-moz-full-screen {
+  background: #0b1020;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#canvas-container:-moz-full-screen canvas {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+}
+
+#canvas-container:-ms-fullscreen {
+  background: #0b1020;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#canvas-container:-ms-fullscreen canvas {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+}
+
 /* Per-visual settings table layout */
 .settings-table {
   width: 100%;

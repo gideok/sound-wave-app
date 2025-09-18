@@ -40,6 +40,9 @@ function App() {
   const [jobProgress, setJobProgress] = useState(0)
   const [jobStatus, setJobStatus] = useState('idle')
 
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
   // Real-time visualization settings
   const VIS_TYPES = [
     { id: 'line', label: 'Waveform (Line)' },
@@ -767,6 +770,56 @@ function App() {
     fileInputRef.current?.click()
   }
 
+  // Fullscreen functionality
+  const toggleFullscreen = async () => {
+    const canvasContainer = document.getElementById('canvas-container')
+    if (!canvasContainer) return
+
+    try {
+      if (!isFullscreen) {
+        if (canvasContainer.requestFullscreen) {
+          await canvasContainer.requestFullscreen()
+        } else if (canvasContainer.webkitRequestFullscreen) {
+          await canvasContainer.webkitRequestFullscreen()
+        } else if (canvasContainer.msRequestFullscreen) {
+          await canvasContainer.msRequestFullscreen()
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen()
+        } else if (document.webkitExitFullscreen) {
+          await document.webkitExitFullscreen()
+        } else if (document.msExitFullscreen) {
+          await document.msExitFullscreen()
+        }
+      }
+    } catch (error) {
+      console.error('Fullscreen error:', error)
+    }
+  }
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.msFullscreenElement
+      )
+      setIsFullscreen(isCurrentlyFullscreen)
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    document.addEventListener('msfullscreenchange', handleFullscreenChange)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+      document.removeEventListener('msfullscreenchange', handleFullscreenChange)
+    }
+  }, [])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} className="unified-width">
       <h1 style={{ fontFamily: 'Bitcount Grid Double, Roboto Condensed, sans-serif' }}>Sound Wave Video Maker</h1>
@@ -1062,11 +1115,33 @@ function App() {
       </div>
 
       {layoutMode === 'overlay' ? (
-        <div className="section-card unified-width canvas-card" onClick={onSeek}>
+        <div id="canvas-container" className="section-card unified-width canvas-card" onClick={onSeek} style={{ position: 'relative' }}>
           <canvas ref={canvasRef} />
+          <button 
+            className="fullscreen-button"
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleFullscreen()
+            }}
+            title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+          >
+            {isFullscreen ? '⤓' : '⤢'}
+          </button>
         </div>
       ) : (
-        <div id="split-canvases" className="section-card unified-width canvas-card" style={{ display: 'grid', gap: 8, gridTemplateColumns: '1fr' }} />
+        <div id="canvas-container" className="section-card unified-width canvas-card" style={{ display: 'grid', gap: 8, gridTemplateColumns: '1fr', position: 'relative' }}>
+          <div id="split-canvases" style={{ display: 'grid', gap: 8, gridTemplateColumns: '1fr' }} />
+          <button 
+            className="fullscreen-button"
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleFullscreen()
+            }}
+            title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+          >
+            {isFullscreen ? '⤓' : '⤢'}
+          </button>
+        </div>
       )}
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
