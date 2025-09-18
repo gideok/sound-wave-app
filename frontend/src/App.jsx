@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import JSZip from 'jszip'
 import './App.css'
 
 function App() {
@@ -66,9 +67,9 @@ function App() {
   const [colAlign, setColAlign] = useState(false)
   const [colVisualGroup, setColVisualGroup] = useState(false)
   const [colLyricLine, setColLyricLine] = useState(false)
-  const [colControls, setColControls] = useState(false)
-  const [colRender, setColRender] = useState(false)
-  const [colPlayer, setColPlayer] = useState(false)
+  const [colControls] = useState(false)
+  const [colRender] = useState(false)
+  const [colPlayer] = useState(false)
 
   const parseLrc = useCallback((text) => {
     if (!text || typeof text !== 'string') return []
@@ -1352,6 +1353,18 @@ function App() {
                     } else {
                       // backend returns ZIP with lrc + proc.wav
                       const blob = await resp.blob()
+                      // Parse ZIP to extract LRC text for on-screen display
+                      try {
+                        const zip = await JSZip.loadAsync(blob)
+                        const lrcFile = Object.values(zip.files).find(f => f.name.toLowerCase().endsWith('.lrc'))
+                        if (lrcFile) {
+                          const lrcText = await lrcFile.async('string')
+                          setLastLrcText(lrcText)
+                        }
+                      } catch {
+                        // ignore parse errors; still allow download
+                      }
+                      // Also offer ZIP download
                       const url = URL.createObjectURL(blob)
                       const a = document.createElement('a')
                       a.href = url

@@ -1329,11 +1329,13 @@ async def align_lyrics(
 			language=lang,
 			vad_filter=False,
 			word_timestamps=True,
-			chunk_length=60,
+			chunk_length=30,  # Smaller chunks for better word-level accuracy
 			condition_on_previous_text=True,
 			beam_size=5,
-			temperature=[0.0, 0.2, 0.4],
-			no_speech_threshold=0.35,
+			temperature=[0.0, 0.1, 0.2],  # Lower temperatures for more consistent output
+			no_speech_threshold=0.25,  # Lower threshold to catch more speech
+			compression_ratio_threshold=2.0,  # Avoid over-compression
+			log_prob_threshold=-1.0,  # More permissive log probability
 		)
 
 		# Collect word-level anchors across the whole track
@@ -1347,11 +1349,17 @@ async def align_lyrics(
 			else:
 				# fallback to segment start if word timing not available
 				word_times.append((float(seg.start or 0.0), seg.text or ""))
+		
+		tlog(f"collected {len(word_times)} word timing anchors from {len(seg_list)} segments")
+		if word_times:
+			tlog(f"first few words: {word_times[:5]}")
+			tlog(f"last few words: {word_times[-5:]}")
 
-		# Build alignment using proportional token mapping across full word timeline
+		# Build alignment using improved word-level matching
 		lines = [ln.strip() for ln in lyrics_text.splitlines() if ln.strip()]
 		pairs = []  # (time, text)
 		track_end = float(seg_list[-1].end or 0.0) if seg_list else 0.0
+		
 		if not word_times:
 			# Fallback: map to segment starts, spread remaining lines to the end
 			anchors = [float(s.start or 0.0) for s in seg_list] if seg_list else [0.0]
@@ -1367,17 +1375,122 @@ async def align_lyrics(
 					gap = max(0.35, span / max(remaining, 1))
 					pairs.append((start_time + (i - (len(anchors) - 1)) * gap, line))
 		else:
-			def _tok(s: str) -> list[str]:
-				return [w for w in re.split(r"\s+", s.strip()) if w]
-			line_tokens = [_tok(l) for l in lines]
-			total_tokens = sum(len(toks) for toks in line_tokens) or len(lines)
+			# Improved alignment using word-level similarity matching
+			def _normalize_text(text: str) -> str:
+				"""Normalize text for better matching (lowercase, remove punctuation)"""
+				import string
+				return ''.join(c.lower() for c in text if c not in string.punctuation).strip()
+			
+			def _find_best_match(line_words: list[str], word_times: list, start_idx: int = 0) -> int:
+				"""Find the best starting position in word_times for the given line words"""
+				if not line_words or not word_times:
+					return start_idx
+				
+				best_score = -1
+				best_idx = start_idx
+				
+				# Look for the best sequence match within a reasonable window
+				search_end = min(len(word_times), start_idx + len(line_words) * 3)
+				for i in range(start_idx, search_end):
+					if i >= len(word_times):
+						break
+					
+					score = 0
+					matches = 0
+					# Check how many consecutive words match
+					for j, line_word in enumerate(line_words):
+						if i + j >= len(word_times):
+							break
+						
+						transcribed_word = _normalize_text(word_times[i + j][1])
+						line_word_norm = _normalize_text(line_word)
+						
+						# Exact match gets highest score
+						if line_word_norm == transcribed_word:
+							score += 10
+							matches += 1
+						# Partial match (contains or contained)
+						elif line_word_norm in transcribed_word or transcribed_word in line_word_norm:
+							score += 5
+							matches += 1
+						# Similar length bonus
+						elif abs(len(line_word_norm) - len(transcribed_word)) <= 2:
+							score += 1
+					
+					# Bonus for consecutive matches
+					if matches > 0:
+						score += matches * 2
+					
+					if score > best_score:
+						best_score = score
+						best_idx = i
+				
+				return best_idx
+			
+			def _tokenize(text: str) -> list[str]:
+				"""Split text into words, handling various punctuation"""
+				import re
+				words = re.findall(r'\b\w+\b', text.lower())
+				return [w for w in words if w]
+			
+			# Process each line with improved matching
+			used_positions = set()
+			current_search_start = 0
+			
+			tlog(f"aligning {len(lines)} lyrics lines with {len(word_times)} word anchors")
+			
 			for i, line in enumerate(lines):
-				before = sum(len(toks) for toks in line_tokens[:i])
-				pos = before / max(1, total_tokens - 1)
-				wi = int(round(pos * (len(word_times) - 1)))
-				wi = max(0, min(len(word_times) - 1, wi))
-				timecode = word_times[wi][0]
-				pairs.append((timecode, line))
+				line_words = _tokenize(line)
+				
+				if not line_words:
+					# Empty line, use time interpolation
+					if i == 0:
+						pairs.append((0.0, line))
+					elif i == len(lines) - 1:
+						pairs.append((track_end, line))
+					else:
+						# Interpolate between previous and next
+						prev_time = pairs[-1][0] if pairs else 0.0
+						next_time = track_end
+						pairs.append((prev_time + 1.0, line))
+					tlog(f"line {i+1}: empty line -> {pairs[-1][0]:.2f}s")
+					continue
+				
+				# Find best match position for this line
+				match_idx = _find_best_match(line_words, word_times, current_search_start)
+				
+				# Ensure we don't go backwards (unless necessary)
+				if match_idx < current_search_start and current_search_start < len(word_times):
+					match_idx = current_search_start
+				
+				# Get timestamp from matched position
+				if match_idx < len(word_times):
+					timecode = word_times[match_idx][0]
+					pairs.append((timecode, line))
+					
+					# Update search start for next line
+					# Advance by estimated line length, but not too far
+					advance = min(len(line_words), max(1, len(line_words) // 2))
+					current_search_start = min(match_idx + advance, len(word_times) - 1)
+					
+					# Debug log for alignment
+					matched_words = [word_times[j][1] for j in range(match_idx, min(match_idx + len(line_words), len(word_times)))]
+					tlog(f"line {i+1}: '{line[:50]}' -> {timecode:.2f}s (matched: {' '.join(matched_words[:5])})")
+				else:
+					# Fallback: extrapolate from last known position
+					if pairs:
+						last_time = pairs[-1][0]
+						estimated_duration = 2.0  # seconds per line fallback
+						pairs.append((last_time + estimated_duration, line))
+					else:
+						pairs.append((0.0, line))
+					tlog(f"line {i+1}: '{line[:50]}' -> {pairs[-1][0]:.2f}s (fallback)")
+			
+			# Post-process: ensure timestamps are monotonically increasing
+			for i in range(1, len(pairs)):
+				if pairs[i][0] <= pairs[i-1][0]:
+					# Add small increment to maintain order
+					pairs[i] = (pairs[i-1][0] + 0.5, pairs[i][1])
 
 		lrc_path = work / "aligned_lyrics.lrc"
 		with lrc_path.open('w', encoding='utf-8-sig') as f:
