@@ -16,6 +16,8 @@ import re
 from typing import Dict, Any, Optional
 import json
 import math
+import datetime
+import time
 
 try:
 	# Prefer bundled ffmpeg from imageio-ffmpeg if available
@@ -934,6 +936,11 @@ async def generate_score(
 	stems_dir.mkdir(exist_ok=True)
 
 	try:
+		start_ts = time.time()
+		def tlog(msg: str):
+			print(f"[score {datetime.datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+		tlog("received request: saving upload…")
 		# save upload
 		with input_path.open("wb") as f:
 			while True:
@@ -945,6 +952,7 @@ async def generate_score(
 		# run demucs to extract vocals only (faster: specify two-stem? demucs doesn't support 2-stem default, so extract all and take vocals)
 		from demucs import separate as demucs_separate
 		demucs_model = "htdemucs" if "4stems" in model else "htdemucs_ft"
+		tlog(f"running Demucs (-n {demucs_model})…")
 		cmd = [
 			"python", "-m", "demucs.separate",
 			"-n", demucs_model,
@@ -954,6 +962,8 @@ async def generate_score(
 		]
 		proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore")
 		if proc.returncode != 0:
+			tail = (proc.stderr or "")[-2000:]
+			tlog("Demucs failed:\n" + tail)
 			raise HTTPException(status_code=500, detail="Demucs 실행 실패")
 
 		# find vocals wav
@@ -963,11 +973,14 @@ async def generate_score(
 				vocals_path = p
 				break
 		if not vocals_path:
+			tlog("no vocals.wav found in Demucs output")
 			raise HTTPException(status_code=500, detail="보컬 파일을 찾지 못했습니다.")
+		tlog(f"found vocals: {vocals_path.name}")
 
 		# f0 estimation with librosa.pyin
 		import librosa
 		import numpy as np
+		tlog("loading vocals and estimating f0 (pyin)…")
 		y, sr = librosa.load(str(vocals_path), sr=22050, mono=True)
 		frame_length = 2048
 		hop_length = 256
@@ -1018,12 +1031,60 @@ async def generate_score(
 			current_tick = start_ticks + dur_ticks
 		midi_path = tmp_dir / "vocal_melody.mid"
 		midi.save(str(midi_path))
+		tlog(f"MIDI written: {midi_path.name}")
 
 		# Convert MIDI to MusicXML via music21
 		from music21 import converter
 		s = converter.parse(str(midi_path))
 		musicxml_path = tmp_dir / "vocal_melody.musicxml"
 		s.write('musicxml', fp=str(musicxml_path))
+		tlog(f"MusicXML written: {musicxml_path.name}")
+
+		# Try to render PDF from MusicXML using MuseScore, if available
+		pdf_path = tmp_dir / "vocal_melody.pdf"
+		musescore_candidates = [
+			shutil.which("MuseScore4.exe"),
+			shutil.which("MuseScore3.exe"),
+			shutil.which("MuseScore.exe"),
+			shutil.which("musescore4.exe"),
+			shutil.which("musescore3.exe"),
+			shutil.which("musescore.exe"),
+			shutil.which("mscore.exe"),
+		]
+		musescore_exe = next((p for p in musescore_candidates if p), None)
+		if musescore_exe and Path(musescore_exe).exists():
+			try:
+				# MuseScore CLI: musescore -o out.pdf in.musicxml
+				cmd_pdf = [musescore_exe, "-o", str(pdf_path), str(musicxml_path)]
+				proc_pdf = subprocess.run(cmd_pdf, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore")
+				if proc_pdf.returncode == 0 and pdf_path.exists():
+					tlog(f"PDF rendered with MuseScore: {pdf_path.name}")
+				else:
+					tlog("MuseScore PDF render failed, continuing without PDF.")
+			except Exception as _:
+				tlog("MuseScore not usable for PDF rendering; skipping.")
+		else:
+			# Fallback: Verovio (MusicXML->SVG) + CairoSVG (SVG->PDF)
+			try:
+				from verovio import toolkit as vr_toolkit
+				import cairosvg
+				# Configure Verovio (A4-ish page, auto height, reasonable scale)
+				tk = vr_toolkit.Toolkit()
+				tk.setOptions({
+					"pageHeight": 2970,   # ~ A4 at 10 units/mm
+					"pageWidth": 2100,
+					"adjustPageHeight": True,
+					"scale": 50
+				})
+				ok = tk.loadFile(str(musicxml_path))
+				if not ok:
+					raise RuntimeError("Verovio failed to load MusicXML")
+				svg = tk.renderToSVG(1)
+				# For multi-page, one could loop pages = krn.getPageCount(); here single page for brevity
+				cairosvg.svg2pdf(bytestring=svg.encode('utf-8'), write_to=str(pdf_path))
+				tlog(f"PDF rendered with Verovio/CairoSVG: {pdf_path.name}")
+			except Exception as _:
+				tlog("No MuseScore; Verovio/CairoSVG fallback failed or not installed. PDF skipped.")
 
 		# Zip
 		zip_path = tmp_dir / "vocal_score.zip"
@@ -1031,6 +1092,11 @@ async def generate_score(
 		with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
 			zipf.write(midi_path, midi_path.name)
 			zipf.write(musicxml_path, musicxml_path.name)
+			if pdf_path.exists():
+				zipf.write(pdf_path, pdf_path.name)
+		total = time.time() - start_ts
+		mins = int(total // 60); secs = int(total % 60)
+		tlog(f"score done in {mins}m {secs}s ({total:.1f}s)")
 
 		return FileResponse(path=str(zip_path), filename=f"{Path(input_path).stem}_vocal_score.zip", media_type="application/zip")
 

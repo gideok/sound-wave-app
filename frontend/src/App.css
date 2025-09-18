@@ -1,3 +1,8 @@
+@keyframes pulse {
+  0% { filter: brightness(1); }
+  50% { filter: brightness(1.6); }
+  100% { filter: brightness(1); }
+}
 #root {
   max-width: 1200px;
   margin: 0 auto;

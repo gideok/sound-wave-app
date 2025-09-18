@@ -49,6 +49,7 @@ function App() {
   const [isSeparating, setIsSeparating] = useState(false)
   const [separationProgress, setSeparationProgress] = useState(0)
   const [separationJobId, setSeparationJobId] = useState(null)
+  const [isGeneratingScore, setIsGeneratingScore] = useState(false)
 
   // Real-time visualization settings
   const VIS_TYPES = [
@@ -1140,9 +1141,11 @@ function App() {
         <h2 className="section-title">Vocal Score</h2>
         <div className="controls-row">
           <button
-            disabled={!selectedFile}
+            disabled={!selectedFile || isGeneratingScore}
+            style={isGeneratingScore ? { animation: 'pulse 1s infinite', background: '#365dfb' } : undefined}
             onClick={async () => {
               try {
+                setIsGeneratingScore(true)
                 const form = new FormData()
                 form.append('file', selectedFile)
                 const resp = await fetch('http://localhost:8000/api/audio/generate-score', { method: 'POST', body: form })
@@ -1158,10 +1161,12 @@ function App() {
                 URL.revokeObjectURL(url)
               } catch (e) {
                 alert('악보 생성 실패: ' + (e?.message || e))
+              } finally {
+                setIsGeneratingScore(false)
               }
             }}
           >
-            Generate Vocal Score (MIDI + MusicXML)
+            {isGeneratingScore ? 'In progress...' : 'Generate Vocal Score (MIDI + MusicXML/PDF)'}
           </button>
         </div>
       </div>
