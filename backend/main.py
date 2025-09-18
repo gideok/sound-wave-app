@@ -1119,7 +1119,8 @@ async def generate_score(
 # ----------------------
 
 def _write_lrc(segments, path: Path):
-	with path.open('w', encoding='utf-8') as f:
+	# Write with UTF-8 BOM to improve compatibility with default Windows editors
+	with path.open('w', encoding='utf-8-sig') as f:
 		for seg in segments:
 			start = seg['start']
 			m = int(start // 60)
@@ -1132,10 +1133,10 @@ def _write_lrc(segments, path: Path):
 @app.post("/api/audio/extract-lyrics")
 async def extract_lyrics(
 	file: UploadFile = File(...),
- 	language: str = "auto",  # auto | ko | en
- 	model_size: str = "small",  # tiny|base|small|medium|large-v3
- 	boost_vocals: bool = True,
-    return_lrc_only: bool = False,
+	language: str = Form("auto"),  # auto | ko | en
+	model_size: str = Form("small"),  # tiny|base|small|medium|large-v3
+	boost_vocals: bool = Form(True),
+	return_lrc_only: bool = Form(False),
 ):
 	"""Separate vocals with Demucs then transcribe using Faster-Whisper with robust settings.
 	Returns ZIP (.lrc + .txt). Set boost_vocals=True to pre-filter/normalize for better recall.
@@ -1253,7 +1254,13 @@ async def extract_lyrics(
 
 		if return_lrc_only and lrc_path.exists():
 			tlog("returning LRC only")
-			return FileResponse(path=str(lrc_path), filename=f"{Path(input_path).stem}.lrc", media_type="text/plain")
+			# Explicit charset for safer rendering on clients
+			return FileResponse(
+				path=str(lrc_path),
+				filename=f"{Path(input_path).stem}.lrc",
+				media_type="text/plain; charset=utf-8",
+				headers={"Content-Type": "text/plain; charset=utf-8"},
+			)
 		elapsed = time.time() - start_ts
 		mins = int(elapsed // 60); secs = int(elapsed % 60)
 		tlog(f"lyrics extraction done in {mins}m {secs}s ({elapsed:.1f}s)")
@@ -1280,6 +1287,7 @@ async def align_lyrics(
 	"""Align user-provided lyrics to audio and produce an .lrc file. Terminal logs include step-by-step progress."""
 	work = Path(tempfile.mkdtemp(prefix="align_"))
 	input_path = work / (Path(file.filename).name or "input")
+	zip_path = work / "aligned_output.zip"
 	try:
 		start_ts = time.time()
 		def tlog(msg: str):
@@ -1319,9 +1327,13 @@ async def align_lyrics(
 		segments, _ = model.transcribe(
 			str(proc_path),
 			language=lang,
-			vad_filter=True,
+			vad_filter=False,
 			word_timestamps=True,
-			chunk_length=30,
+			chunk_length=60,
+			condition_on_previous_text=True,
+			beam_size=5,
+			temperature=[0.0, 0.2, 0.4],
+			no_speech_threshold=0.35,
 		)
 
 		# Collect word-level anchors across the whole track
@@ -1336,7 +1348,7 @@ async def align_lyrics(
 				# fallback to segment start if word timing not available
 				word_times.append((float(seg.start or 0.0), seg.text or ""))
 
-		# Build alignment by distributing lines over anchors; avoid collapsing to the last timestamp
+		# Build alignment using proportional token mapping across full word timeline
 		lines = [ln.strip() for ln in lyrics_text.splitlines() if ln.strip()]
 		pairs = []  # (time, text)
 		track_end = float(seg_list[-1].end or 0.0) if seg_list else 0.0
@@ -1355,29 +1367,34 @@ async def align_lyrics(
 					gap = max(0.35, span / max(remaining, 1))
 					pairs.append((start_time + (i - (len(anchors) - 1)) * gap, line))
 		else:
-			# Use word anchors primarily; when exhausted, distribute evenly to track end
-			anchors = [t for (t, _w) in word_times]
+			def _tok(s: str) -> list[str]:
+				return [w for w in re.split(r"\s+", s.strip()) if w]
+			line_tokens = [_tok(l) for l in lines]
+			total_tokens = sum(len(toks) for toks in line_tokens) or len(lines)
 			for i, line in enumerate(lines):
-				if i < len(anchors):
-					pairs.append((anchors[i], line))
-				else:
-					remaining = len(lines) - i
-					start_time = anchors[-1]
-					span = max(0.0, track_end - start_time)
-					gap = max(0.35, span / max(remaining, 1))
-					pairs.append((start_time + (i - (len(anchors) - 1)) * gap, line))
+				before = sum(len(toks) for toks in line_tokens[:i])
+				pos = before / max(1, total_tokens - 1)
+				wi = int(round(pos * (len(word_times) - 1)))
+				wi = max(0, min(len(word_times) - 1, wi))
+				timecode = word_times[wi][0]
+				pairs.append((timecode, line))
 
 		lrc_path = work / "aligned_lyrics.lrc"
-		with lrc_path.open('w', encoding='utf-8') as f:
+		with lrc_path.open('w', encoding='utf-8-sig') as f:
 			for t, text in pairs:
 				m = int(t // 60); s = int(t % 60); cs = int((t - int(t)) * 100)
 				f.write(f"[{m:02d}:{s:02d}.{cs:02d}]" + text + "\n")
 		tlog(f"lrc written: {lrc_path.name}")
 
+		# Package ZIP with LRC and 16k mono audio used
+		import zipfile
+		with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+			zipf.write(lrc_path, lrc_path.name)
+			zipf.write(proc_path, proc_path.name)
 		elapsed = time.time() - start_ts
 		mins = int(elapsed // 60); secs = int(elapsed % 60)
 		tlog(f"alignment done in {mins}m {secs}s ({elapsed:.1f}s)")
-		return FileResponse(path=str(lrc_path), filename=f"{Path(input_path).stem}_aligned.lrc", media_type="text/plain")
+		return FileResponse(path=str(zip_path), filename=f"{Path(input_path).stem}_aligned.zip", media_type="application/zip")
 	except HTTPException:
 		shutil.rmtree(work, ignore_errors=True)
 		raise

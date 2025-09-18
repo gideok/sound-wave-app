@@ -1314,12 +1314,12 @@ function App() {
                       a.remove()
                       URL.revokeObjectURL(url)
                     } else {
-                      // fallback: treat as blob
+                      // backend returns ZIP with lrc + proc.wav
                       const blob = await resp.blob()
                       const url = URL.createObjectURL(blob)
                       const a = document.createElement('a')
                       a.href = url
-                      a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + '_aligned.lrc'
+                      a.download = (selectedFile?.name?.replace(/\.[^/.]+$/, '') || 'audio') + '_aligned.zip'
                       document.body.appendChild(a)
                       a.click()
                       a.remove()
