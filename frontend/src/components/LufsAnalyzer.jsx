@@ -58,11 +58,31 @@ const LufsAnalyzer = ({
   measureLUFS,
   normalizeToTarget,
   isCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  showUploadReminder,
+  setShowUploadReminder
 }) => {
   const numberInput = (value, onChange, props = {}) => (
     <input type="number" value={value} onChange={(e) => onChange(Number(e.target.value || 0))} {...props} />
   )
+
+  const handleMeasureLUFS = () => {
+    if (!selectedFile) {
+      setShowUploadReminder(true)
+      setTimeout(() => setShowUploadReminder(false), 3000)
+      return
+    }
+    measureLUFS(selectedFile)
+  }
+
+  const handleNormalize = () => {
+    if (!selectedFile) {
+      setShowUploadReminder(true)
+      setTimeout(() => setShowUploadReminder(false), 3000)
+      return
+    }
+    normalizeToTarget(selectedFile)
+  }
 
   return (
     <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', position: 'relative' }}>
@@ -71,7 +91,7 @@ const LufsAnalyzer = ({
       {!isCollapsed && (
         <>
           <div className="controls-row">
-            <button disabled={!selectedFile || isMeasuring} onClick={() => measureLUFS(selectedFile)}>
+            <button disabled={isMeasuring} onClick={handleMeasureLUFS}>
               {isMeasuring ? 'Measuring…' : 'Measure LUFS'}
             </button>
             {lufsData && (
@@ -93,7 +113,7 @@ const LufsAnalyzer = ({
                 <label>LRA</label>
                 {numberInput(targetLra, setTargetLra, { step: 0.5, style: { width: 80 } })}
               </div>
-              <button disabled={!selectedFile || isNormalizing} onClick={() => normalizeToTarget(selectedFile)}>
+              <button disabled={isNormalizing} onClick={handleNormalize}>
                 {isNormalizing ? 'Normalizing…' : 'Normalize & Download'}
               </button>
             </div>

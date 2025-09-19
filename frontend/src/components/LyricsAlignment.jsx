@@ -13,7 +13,9 @@ const LyricsAlignment = ({
   alignLyrics,
   setLastLrcText,
   isCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  showUploadReminder,
+  setShowUploadReminder
 }) => {
   const fileInputRef = useRef(null)
 
@@ -31,8 +33,13 @@ const LyricsAlignment = ({
   }
 
   const handleAlignLyrics = () => {
-    if (!selectedFile || !alignLyricsText.trim()) {
-      alert('Please select a file and enter lyrics text.')
+    if (!selectedFile) {
+      setShowUploadReminder(true)
+      setTimeout(() => setShowUploadReminder(false), 3000)
+      return
+    }
+    if (!alignLyricsText.trim()) {
+      alert('Please enter lyrics text.')
       return
     }
     alignLyrics(selectedFile, alignLang, alignModel, alignLyricsText)

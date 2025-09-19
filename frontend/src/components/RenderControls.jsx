@@ -5,14 +5,25 @@ const RenderControls = ({
   jobStatus,
   jobProgress,
   startRenderAsync,
-  isCollapsed
+  isCollapsed,
+  showUploadReminder,
+  setShowUploadReminder
 }) => {
   if (isCollapsed) return null
+
+  const handleRender = () => {
+    if (!selectedFile) {
+      setShowUploadReminder(true)
+      setTimeout(() => setShowUploadReminder(false), 3000)
+      return
+    }
+    startRenderAsync(selectedFile)
+  }
 
   return (
     <>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
-        <button disabled={!selectedFile} onClick={() => startRenderAsync(selectedFile)}>
+        <button onClick={handleRender}>
           {jobStatus === 'running' || jobStatus === 'starting' ? 'Rendering...' : 'Render MP4 (Async)'}
         </button>
       </div>

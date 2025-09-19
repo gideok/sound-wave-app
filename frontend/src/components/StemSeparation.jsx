@@ -10,8 +10,18 @@ const StemSeparation = ({
   setSelectedStemModel,
   separateStems,
   isCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  showUploadReminder,
+  setShowUploadReminder
 }) => {
+  const handleSeparateStems = () => {
+    if (!selectedFile) {
+      setShowUploadReminder(true)
+      setTimeout(() => setShowUploadReminder(false), 3000)
+      return
+    }
+    separateStems(selectedFile)
+  }
   return (
     <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', position: 'relative' }}>
       <h2 className="section-title">Stem Separation</h2>
@@ -38,8 +48,8 @@ const StemSeparation = ({
                   ))}
                 </select>
                 <button 
-                  disabled={!selectedFile || isSeparating} 
-                  onClick={() => separateStems(selectedFile)}
+                  disabled={isSeparating} 
+                  onClick={handleSeparateStems}
                 >
                   {isSeparating ? 'Separating...' : 'Separate Stems'}
                 </button>

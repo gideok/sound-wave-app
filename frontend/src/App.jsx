@@ -30,6 +30,8 @@ import { useRecording } from './hooks/useRecording'
 import { DEFAULT_LAYOUT_MODE } from './constants/visualization'
 
 function App() {
+  console.log('App component rendering...')
+  
   // Collapsible state for each section
   const [colLufs, setColLufs] = useState(false)
   const [colStems, setColStems] = useState(false)
@@ -44,7 +46,15 @@ function App() {
 
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
+  
+  // Global collapse state
+  const [allCollapsed, setAllCollapsed] = useState(false)
+  
+  // Upload reminder modal state
+  const [showUploadReminder, setShowUploadReminder] = useState(false)
 
+  console.log('Initializing hooks...')
+  
   // Custom hooks
   const audioPlayer = useAudioPlayer()
   const lufsAnalysis = useLufsAnalysis()
@@ -59,6 +69,21 @@ function App() {
   const stemSeparation = useStemSeparation()
   const lyricsProcessing = useLyricsProcessing()
   const recording = useRecording()
+
+  console.log('Hooks initialized successfully')
+
+  // Global collapse/expand functions
+  const toggleAllCollapse = useCallback(() => {
+    const newState = !allCollapsed
+    setAllCollapsed(newState)
+    setColLufs(newState)
+    setColStems(newState)
+    setColScore(newState)
+    setColLyrics(newState)
+    setColAlign(newState)
+    setColVisualGroup(newState)
+    setColLyricLine(newState)
+  }, [allCollapsed])
 
   useEffect(() => {
     lyricsProcessing.setParsedLrc(lyricsProcessing.parseLrc(lyricsProcessing.lastLrcText))
@@ -222,6 +247,8 @@ function App() {
     }
   }, [audioPlayer.audioUrl, audioPlayer.onTogglePlay])
 
+  console.log('Rendering main component...')
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} className="unified-width">
       <h1 style={{ fontFamily: 'Bitcount Grid Double, Roboto Condensed, sans-serif' }}>Sound Wave Video Maker</h1>
@@ -275,6 +302,8 @@ function App() {
         normalizeToTarget={lufsAnalysis.normalizeToTarget}
         isCollapsed={colLufs}
         onToggleCollapse={() => setColLufs(v => !v)}
+        showUploadReminder={showUploadReminder}
+        setShowUploadReminder={setShowUploadReminder}
       />
 
       <StemSeparation
@@ -288,6 +317,8 @@ function App() {
         separateStems={stemSeparation.separateStems}
         isCollapsed={colStems}
         onToggleCollapse={() => setColStems(v => !v)}
+        showUploadReminder={showUploadReminder}
+        setShowUploadReminder={setShowUploadReminder}
       />
 
       <VocalScoreGenerator
@@ -296,6 +327,8 @@ function App() {
         generateScore={lyricsProcessing.generateScore}
         isCollapsed={colScore}
         onToggleCollapse={() => setColScore(v => !v)}
+        showUploadReminder={showUploadReminder}
+        setShowUploadReminder={setShowUploadReminder}
       />
 
       <LyricsExtractor
@@ -306,6 +339,7 @@ function App() {
         extractLyrics={lyricsProcessing.extractLyrics}
         isCollapsed={colLyrics}
         onToggleCollapse={() => setColLyrics(v => !v)}
+        setShowUploadReminder={setShowUploadReminder}
       />
 
       <LyricsAlignment
@@ -321,6 +355,8 @@ function App() {
         setLastLrcText={lyricsProcessing.setLastLrcText}
         isCollapsed={colAlign}
         onToggleCollapse={() => setColAlign(v => !v)}
+        showUploadReminder={showUploadReminder}
+        setShowUploadReminder={setShowUploadReminder}
       />
 
       <VisualizationSettings
@@ -369,6 +405,8 @@ function App() {
         stopRecording={recording.stopRecording}
         recordUrl={recording.recordUrl}
         isCollapsed={colControls}
+        showUploadReminder={showUploadReminder}
+        setShowUploadReminder={setShowUploadReminder}
       />
 
       <RenderControls
@@ -377,6 +415,8 @@ function App() {
         jobProgress={renderSettings.jobProgress}
         startRenderAsync={renderSettings.startRenderAsync}
         isCollapsed={colRender}
+        showUploadReminder={showUploadReminder}
+        setShowUploadReminder={setShowUploadReminder}
       />
 
       {!colPlayer && (
@@ -389,6 +429,131 @@ function App() {
           controls
           style={{ display: audioPlayer.audioUrl ? 'block' : 'none', margin: '0 auto' }}
         />
+      )}
+
+      {/* Floating Collapse/Expand Button */}
+      <button
+        onClick={toggleAllCollapse}
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          width: '60px',
+          height: '60px',
+          borderRadius: '50%',
+          backgroundColor: allCollapsed ? '#10b981' : '#ef4444',
+          color: 'white',
+          border: 'none',
+          fontSize: '24px',
+          cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'all 0.3s ease',
+          fontFamily: 'monospace'
+        }}
+        onMouseEnter={(e) => {
+          e.target.style.transform = 'scale(1.1)'
+          e.target.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.25)'
+        }}
+        onMouseLeave={(e) => {
+          e.target.style.transform = 'scale(1)'
+          e.target.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)'
+        }}
+        title={allCollapsed ? 'Expand All Sections' : 'Collapse All Sections'}
+      >
+        {allCollapsed ? '⤢' : '⤡'}
+      </button>
+
+      {/* Upload Reminder Modal */}
+      {showUploadReminder && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 2000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            animation: 'fadeIn 0.3s ease-in-out'
+          }}
+          onClick={() => setShowUploadReminder(false)}
+        >
+          <div
+            style={{
+              backgroundColor: 'white',
+              borderRadius: '12px',
+              padding: '32px',
+              maxWidth: '400px',
+              width: '90%',
+              textAlign: 'center',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.3)',
+              animation: 'slideIn 0.3s ease-out',
+              border: '1px solid #e5e7eb'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                fontSize: '48px',
+                marginBottom: '16px',
+                color: '#6b7280'
+              }}
+            >
+              🎵
+            </div>
+            <h3
+              style={{
+                fontSize: '20px',
+                fontWeight: '600',
+                color: '#111827',
+                marginBottom: '12px',
+                fontFamily: 'Roboto Condensed, sans-serif'
+              }}
+            >
+              Please Upload Audio File First
+            </h3>
+            <p
+              style={{
+                fontSize: '14px',
+                color: '#6b7280',
+                lineHeight: '1.5',
+                marginBottom: '20px'
+              }}
+            >
+              You need to upload an audio file before using the collapse/expand functionality.
+            </p>
+            <button
+              onClick={() => setShowUploadReminder(false)}
+              style={{
+                backgroundColor: '#3b82f6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '10px 20px',
+                fontSize: '14px',
+                fontWeight: '500',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#2563eb'
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = '#3b82f6'
+              }}
+            >
+              Got it
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -1,6 +1,23 @@
 import React from 'react'
 
-const VocalScoreGenerator = ({ selectedFile, isGeneratingScore, generateScore, isCollapsed, onToggleCollapse }) => {
+const VocalScoreGenerator = ({ 
+  selectedFile, 
+  isGeneratingScore, 
+  generateScore, 
+  isCollapsed, 
+  onToggleCollapse,
+  showUploadReminder,
+  setShowUploadReminder
+}) => {
+  const handleGenerateScore = () => {
+    if (!selectedFile) {
+      setShowUploadReminder(true)
+      setTimeout(() => setShowUploadReminder(false), 3000)
+      return
+    }
+    generateScore(selectedFile)
+  }
+
   return (
     <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', position: 'relative' }}>
       <h2 className="section-title">Vocal Score</h2>
@@ -8,9 +25,9 @@ const VocalScoreGenerator = ({ selectedFile, isGeneratingScore, generateScore, i
       {!isCollapsed && (
         <div className="controls-row">
           <button
-            disabled={!selectedFile || isGeneratingScore}
+            disabled={isGeneratingScore}
             style={isGeneratingScore ? { animation: 'pulse 1s infinite', background: '#365dfb' } : undefined}
-            onClick={() => generateScore(selectedFile)}
+            onClick={handleGenerateScore}
           >
             {isGeneratingScore ? 'In progress...' : 'Generate Vocal Score (MIDI + MusicXML/PDF)'}
           </button>

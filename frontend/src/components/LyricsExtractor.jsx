@@ -7,8 +7,18 @@ const LyricsExtractor = ({
   setLyricsLang, 
   extractLyrics, 
   isCollapsed, 
-  onToggleCollapse 
+  onToggleCollapse,
+  setShowUploadReminder
 }) => {
+  const handleExtractLyrics = () => {
+    if (!selectedFile) {
+      setShowUploadReminder(true)
+      setTimeout(() => setShowUploadReminder(false), 3000)
+      return
+    }
+    extractLyrics(selectedFile, lyricsLang)
+  }
+
   return (
     <div className="section-card unified-width" style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', position: 'relative' }}>
       <h2 className="section-title">Lyrics (Korean/English)</h2>
@@ -22,9 +32,9 @@ const LyricsExtractor = ({
             <option value="en">English</option>
           </select>
           <button
-            disabled={!selectedFile || isExtractingLyrics}
+            disabled={isExtractingLyrics}
             style={isExtractingLyrics ? { animation: 'pulse 1s infinite', background: '#365dfb' } : undefined}
-            onClick={() => extractLyrics(selectedFile, lyricsLang)}
+            onClick={handleExtractLyrics}
           >
             {isExtractingLyrics ? 'In progress...' : 'Extract Lyrics (.lrc + .txt)'}
           </button>
