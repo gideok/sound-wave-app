@@ -1,12 +1,14 @@
 import React from 'react'
 
-const LyricsDisplay = ({ parsedLrc, audioRef, isCollapsed, onToggleCollapse }) => {
-  if (parsedLrc.length === 0 || isCollapsed) return null
-
+const LyricsDisplay = ({ parsedLrc, audioRef }) => {
+  // Always show the lyrics area, regardless of lyrics availability
   return (
-    <div className="section-card unified-width" style={{ textAlign: 'center', paddingTop: 8, paddingBottom: 12, position: 'relative' }}>
-      <button style={{ position: 'absolute', top: 8, right: 8 }} onClick={onToggleCollapse} title={'Collapse'}>▣</button>
-      {(() => {
+    <div className="section-card unified-width" style={{ textAlign: 'center', paddingTop: 8, paddingBottom: 12 }}>
+      {parsedLrc.length === 0 ? (
+        <div style={{ color: '#6B7280', fontSize: 16, fontWeight: 500 }}>
+          No lyrics available
+        </div>
+      ) : (() => {
         let idx = -1
         for (let i = 0; i < parsedLrc.length; i++) {
           if (parsedLrc[i].time <= (audioRef.current?.currentTime || 0)) idx = i

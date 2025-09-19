@@ -38,7 +38,6 @@ function App() {
   const [colLyrics, setColLyrics] = useState(false)
   const [colAlign, setColAlign] = useState(false)
   const [colVisualGroup, setColVisualGroup] = useState(false)
-  const [colLyricLine, setColLyricLine] = useState(false)
   const [colControls] = useState(false)
   const [colRender] = useState(false)
   const [colPlayer] = useState(false)
@@ -81,7 +80,7 @@ function App() {
     setColLyrics(newState)
     setColAlign(newState)
     setColVisualGroup(newState)
-    setColLyricLine(newState)
+    // colLyricLine is excluded from global collapse/expand
   }, [allCollapsed])
 
   useEffect(() => {
@@ -372,8 +371,6 @@ function App() {
       <LyricsDisplay
         parsedLrc={lyricsProcessing.parsedLrc}
         audioRef={audioPlayer.audioRef}
-        isCollapsed={colLyricLine}
-        onToggleCollapse={() => setColLyricLine(true)}
       />
 
       <AudioControls
