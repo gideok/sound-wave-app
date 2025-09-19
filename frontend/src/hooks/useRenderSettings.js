@@ -68,15 +68,25 @@ export const useRenderSettings = () => {
     }
   }, [])
 
-  const startRenderAsync = useCallback(async (selectedFile) => {
+  const startRenderAsync = useCallback(async (selectedFile, selectedVis = ['line'], visSettings = {}) => {
     if (!selectedFile) return
     try {
       setJobProgress(0); setJobStatus('starting')
       const form = new FormData()
       form.append('file', selectedFile)
+      
+      // Create color mapping for selected visualizations
+      const visualizationColors = selectedVis.map(vis => {
+        const color = visSettings[vis]?.color || '#5ac8fa'
+        // Convert #RRGGBB to 0xRRGGBB format
+        return color.startsWith('#') ? '0x' + color.slice(1) : color
+      })
+      
       const qs = new URLSearchParams({
         width: String(widthPx), height: String(heightPx), fps: String(fps),
         color: toHex0x(waveColor), background: toHex0x(bgColor),
+        visualization_types: selectedVis.join(','),
+        visualization_colors: visualizationColors.join(',')
       })
       const resp = await fetch('http://localhost:8000/api/render/start?' + qs.toString(), { method: 'POST', body: form })
       if (!resp.ok) throw new Error(await resp.text())

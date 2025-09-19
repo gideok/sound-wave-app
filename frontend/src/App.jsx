@@ -3,7 +3,6 @@ import './App.css'
 
 // Components
 import FileSelector from './components/FileSelector'
-import RenderSettings from './components/RenderSettings'
 import LufsAnalyzer from './components/LufsAnalyzer'
 import StemSeparation from './components/StemSeparation'
 import VocalScoreGenerator from './components/VocalScoreGenerator'
@@ -12,7 +11,7 @@ import LyricsAlignment from './components/LyricsAlignment'
 import VisualizationSettings from './components/VisualizationSettings'
 import CanvasVisualization from './components/CanvasVisualization'
 import AudioControls from './components/AudioControls'
-import RenderControls from './components/RenderControls'
+import RenderSection from './components/RenderSection'
 import LyricsDisplay from './components/LyricsDisplay'
 
 // Hooks
@@ -258,21 +257,6 @@ function App() {
         selectedFile={audioPlayer.selectedFile} 
       />
 
-      <RenderSettings 
-        preset={renderSettings.preset}
-        widthPx={renderSettings.widthPx}
-        heightPx={renderSettings.heightPx}
-        fps={renderSettings.fps}
-        waveColor={renderSettings.waveColor}
-        bgColor={renderSettings.bgColor}
-        applyPreset={renderSettings.applyPreset}
-        setWidthPx={renderSettings.setWidthPx}
-        setHeightPx={renderSettings.setHeightPx}
-        setFps={renderSettings.setFps}
-        setWaveColor={renderSettings.setWaveColor}
-        setBgColor={renderSettings.setBgColor}
-      />
-
       <LufsAnalyzer
         selectedFile={audioPlayer.selectedFile}
         isMeasuring={lufsAnalysis.isMeasuring}
@@ -409,14 +393,25 @@ function App() {
         setShowUploadReminder={setShowUploadReminder}
       />
 
-      <RenderControls
+      <RenderSection
         selectedFile={audioPlayer.selectedFile}
+        preset={renderSettings.preset}
+        widthPx={renderSettings.widthPx}
+        heightPx={renderSettings.heightPx}
+        fps={renderSettings.fps}
+        applyPreset={renderSettings.applyPreset}
+        setWidthPx={renderSettings.setWidthPx}
+        setHeightPx={renderSettings.setHeightPx}
+        setFps={renderSettings.setFps}
         jobStatus={renderSettings.jobStatus}
         jobProgress={renderSettings.jobProgress}
         startRenderAsync={renderSettings.startRenderAsync}
         isCollapsed={colRender}
+        onToggleCollapse={() => setColRender(v => !v)}
         showUploadReminder={showUploadReminder}
         setShowUploadReminder={setShowUploadReminder}
+        selectedVis={visualization.selectedVis}
+        visSettings={visualization.visSettings}
       />
 
       {!colPlayer && (
