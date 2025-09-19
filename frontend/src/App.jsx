@@ -249,7 +249,7 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }} className="unified-width">
-      <h1 style={{ fontFamily: 'Bitcount Grid Double, Roboto Condensed, sans-serif' }}>Sound Wave Video Maker</h1>
+      <h1 style={{ fontFamily: 'Bitcount Grid Double, Roboto Condensed, sans-serif' }}>MIL Sound Producer</h1>
 
       <FileSelector 
         onSelectFile={audioPlayer.onSelectFile} 
