@@ -12,14 +12,14 @@ A full-stack application for audio visualization, LUFS analysis/normalization, A
 
 ### 🎬 Video Rendering
 - **Real-time Visualization**: Live audio visualization with customizable settings
-- **Video Export**: Render waveform visualizations to MP4 videos
+- **Video Export**: ⚠️ Limited MP4 rendering (basic waveform only)
 - **Fullscreen Mode**: Immersive visualization experience
 - **Customizable Settings**: Adjust colors, dimensions, FPS, and visualization parameters
 
 ### 🎤 Advanced Features
 - **Vocal Score Generation**: Generate vocal scores from audio
 - **Lyrics Alignment**: Upload LRC files or align lyrics with audio timestamps
-- **Media Recording**: Record screen while playing audio
+- **Media Recording**: ⚠️ Limited screen recording (Chrome recommended)
 - **Keyboard Shortcuts**: Space bar for play/pause control
 
 ## Tech Stack
@@ -143,7 +143,8 @@ sound-wave-app/
 - Select visualization types and layout mode
 - Customize colors, dimensions, and settings
 - Use fullscreen mode for immersive experience
-- Render visualizations to MP4 video
+- ⚠️ **Render MP4**: Limited to basic waveform rendering only
+- ⚠️ **Recording**: Use Chrome browser for best compatibility
 
 ## Key Features
 
@@ -151,6 +152,7 @@ sound-wave-app/
 - Multiple visualization modes with customizable parameters
 - Smooth real-time rendering using Canvas API
 - Responsive design that adapts to different screen sizes
+- ⚠️ **Note**: Advanced effects not available in rendered output
 
 ### Advanced Audio Processing
 - LUFS measurement and normalization
@@ -161,6 +163,41 @@ sound-wave-app/
 - Custom hooks for state management and side effects
 - Component-based architecture with proper separation of concerns
 - Performance optimizations with React.memo and useCallback
+- ⚠️ **Note**: Recording and rendering features have limitations
+
+## Current Status & Known Issues
+
+### ⚠️ **Non-Functional Features**
+
+#### **Recording Functionality**
+- **Status**: Partially functional with limitations
+- **Issues**:
+  - Browser compatibility warnings (Chrome recommended)
+  - Canvas/audio capture may fail in some browsers
+  - Lyrics overlay feature was removed due to implementation complexity
+  - Recording quality depends on browser's MediaRecorder implementation
+- **Workaround**: Use Chrome browser for best compatibility
+
+#### **Video Rendering (Render MP4)**
+- **Status**: Limited functionality
+- **Issues**:
+  - FFmpeg filter compatibility problems
+  - `showfreqs` filter with `scale=log` option not supported
+  - `showwaves` filter with `mode=bar`/`mode=line` options cause parsing errors
+  - Multiple visualization types not properly layered
+  - Simplified to basic waveform rendering only
+- **Current Workaround**: 
+  - Only first selected visualization is rendered
+  - All visualizations use basic waveform mode for compatibility
+  - Spectrum/Bars effects are not applied in rendered output
+
+### ✅ **Fully Functional Features**
+- Audio file upload and playback
+- LUFS analysis and normalization
+- Stem separation (AI-powered)
+- Lyrics extraction and alignment
+- Real-time audio visualization
+- Vocal score generation
 
 ## Troubleshooting
 
@@ -182,6 +219,18 @@ sound-wave-app/
    - High quality: `htdemucs_ft` / Speed: `htdemucs`
    - Consider `-d cuda` for GPU environments
    - TTA/overlap/segment options planned for future profiles
+
+5. **Recording Issues**
+   - Use Chrome browser for best compatibility
+   - Ensure HTTPS environment (localhost is exception)
+   - Check browser media permissions
+   - Disable popup blockers
+
+6. **Render MP4 Issues**
+   - Only basic waveform rendering is currently supported
+   - Multiple visualizations are not properly layered
+   - FFmpeg filter compatibility issues with advanced modes
+   - Consider using external video editing software for complex effects
 
 ## Development
 
